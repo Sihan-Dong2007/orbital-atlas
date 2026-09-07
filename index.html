@@ -1,0 +1,881 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orbital Atlas</title>
+<style>
+  :root{
+    --void:#05060d;
+    --void-deep:#020309;
+    --panel:#0b0e1f;
+    --star:#f4f0e6;
+    --star-dim:#9aa0c0;
+    --nova:#ffb454;
+    --nova-dim:#c98a3e;
+    --nebula:#8f7dff;
+    --signal:#5fe3e6;
+    --antares:#ff5d5d;
+    --line-faint:rgba(244,240,230,0.14);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;
+    padding:0;
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:var(--void);
+    font-family:'IBM Plex Mono', ui-monospace, monospace;
+  }
+  #stage, #fx{
+    position:fixed;
+    inset:0;
+    width:100%;
+    height:100%;
+    display:block;
+  }
+  #fx{ pointer-events:none; }
+
+  .hud{
+    position:fixed;
+    top:0; left:0; right:0;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:clamp(14px,2.2vh,28px) clamp(18px,2.6vw,40px);
+    z-index:5;
+    pointer-events:none;
+  }
+  .wordmark{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:clamp(11px,1.05vw,15px);
+    letter-spacing:0.22em;
+    text-transform:uppercase;
+    color:var(--star-dim);
+    display:flex;
+    align-items:baseline;
+    gap:0.6em;
+  }
+  .wordmark b{
+    color:var(--star);
+    font-weight:600;
+  }
+  .dots{
+    display:flex;
+    gap:clamp(8px,1vw,14px);
+  }
+  .dot{
+    width:clamp(26px,2.6vw,40px);
+    height:3px;
+    background:var(--line-faint);
+    position:relative;
+    overflow:hidden;
+    border-radius:2px;
+  }
+  .dot i{
+    position:absolute; inset:0;
+    background:var(--nova);
+    transform:scaleX(0);
+    transform-origin:left;
+    display:block;
+  }
+  .dot.done i{ transform:scaleX(1); }
+  .dot.active i{ transition:transform linear; }
+
+  .dock{
+    position:fixed;
+    left:0; right:0; bottom:0;
+    z-index:5;
+    padding:clamp(20px,4vh,52px) clamp(20px,3vw,48px) clamp(24px,4.4vh,56px);
+    background:linear-gradient(to top, rgba(2,3,9,0.92) 0%, rgba(2,3,9,0.72) 40%, rgba(2,3,9,0) 100%);
+    pointer-events:none;
+  }
+  .dock-inner{
+    max-width:920px;
+    opacity:0;
+    transform:translateY(10px);
+    transition:opacity 0.5s ease, transform 0.5s ease;
+  }
+  .dock-inner.show{
+    opacity:1;
+    transform:translateY(0);
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:clamp(11px,1vw,14px);
+    letter-spacing:0.28em;
+    text-transform:uppercase;
+    color:var(--accent, var(--nova));
+    margin:0 0 0.7em;
+  }
+  .title{
+    font-family:'Fraunces', Georgia, serif;
+    font-optical-sizing:auto;
+    font-weight:600;
+    font-style:normal;
+    font-size:clamp(34px,5.4vw,76px);
+    line-height:1.02;
+    color:var(--star);
+    margin:0 0 0.28em;
+    text-wrap:balance;
+  }
+  .fact{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:clamp(13px,1.15vw,18px);
+    line-height:1.55;
+    color:var(--star-dim);
+    max-width:62ch;
+    margin:0 0 0.9em;
+  }
+  .meta{
+    display:flex;
+    flex-wrap:wrap;
+    gap:1.6em;
+  }
+  .meta span{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:clamp(10.5px,0.85vw,13px);
+    letter-spacing:0.08em;
+    color:var(--star-dim);
+    opacity:0.85;
+  }
+  .meta span b{
+    color:var(--accent, var(--nova));
+    font-weight:600;
+  }
+
+  .scale-readout{
+    position:fixed;
+    top:clamp(60px,9vh,110px);
+    right:clamp(20px,3vw,48px);
+    text-align:right;
+    z-index:5;
+    pointer-events:none;
+    opacity:0;
+    transition:opacity 0.4s ease;
+  }
+  .scale-readout.show{ opacity:1; }
+  .scale-readout .num{
+    font-family:'Fraunces', serif;
+    font-weight:600;
+    font-size:clamp(22px,2.6vw,38px);
+    color:var(--signal);
+  }
+  .scale-readout .unit{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:clamp(10px,0.85vw,13px);
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    color:var(--star-dim);
+  }
+
+  .live-badge{
+    position:fixed;
+    top:clamp(60px,9vh,110px);
+    left:clamp(20px,3vw,48px);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:clamp(10px,0.85vw,12px);
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    color:var(--signal);
+    display:flex;
+    align-items:center;
+    gap:0.5em;
+    opacity:0;
+    transition:opacity 0.4s ease;
+    z-index:5;
+    pointer-events:none;
+  }
+  .live-badge.show{ opacity:1; }
+  .live-badge i{
+    width:7px;height:7px;border-radius:50%;
+    background:var(--signal);
+    box-shadow:0 0 8px var(--signal);
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .dot i, .dock-inner{ transition-duration:0.01ms !important; }
+  }
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<canvas id="stage"></canvas>
+<canvas id="fx"></canvas>
+
+<div class="hud">
+  <div class="wordmark"><b>BYU CS</b> · ORBITAL ATLAS</div>
+  <div class="dots" id="dots"></div>
+</div>
+
+<div class="live-badge" id="liveBadge"><i></i><span>LIVE · NASA APOD</span></div>
+<div class="scale-readout" id="scaleReadout">
+  <div class="num" id="scaleNum">1</div>
+  <div class="unit" id="scaleUnit">EARTH DIAMETER</div>
+</div>
+
+<div class="dock">
+  <div class="dock-inner" id="dockInner">
+    <p class="eyebrow" id="eyebrow">NIGHT SKY</p>
+    <h1 class="title" id="title">Orion</h1>
+    <p class="fact" id="fact">The Hunter.</p>
+    <div class="meta" id="meta"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- canvas setup ----------
+  var stage = document.getElementById('stage');
+  var fx = document.getElementById('fx');
+  var sctx = stage.getContext('2d');
+  var fctx = fx.getContext('2d');
+  var W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  function resize(){
+    W = window.innerWidth;
+    H = window.innerHeight;
+    [stage, fx].forEach(function(c){
+      c.width = W * DPR;
+      c.height = H * DPR;
+      c.style.width = W + 'px';
+      c.style.height = H + 'px';
+    });
+    sctx.setTransform(DPR,0,0,DPR,0,0);
+    fctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function cx(){ return W/2; }
+  function cy(){ return H*0.44; }
+  function stageScale(){ return Math.min(W, H*1.15); }
+
+  // ---------- utils ----------
+  function lerp(a,b,t){ return a+(b-a)*t; }
+  function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+  function easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+  function easeOutCubic(t){ return 1-Math.pow(1-t,3); }
+  function rand(a,b){ return a + Math.random()*(b-a); }
+  function fmt(n){ return n.toLocaleString('en-US'); }
+
+  // ---------- persistent starfield ----------
+  var stars = [];
+  (function seedStars(){
+    var n = 260;
+    for(var i=0;i<n;i++){
+      stars.push({
+        x: Math.random(),
+        y: Math.random(),
+        r: rand(0.5,1.7),
+        phase: rand(0,Math.PI*2),
+        speed: rand(0.6,1.8),
+        drift: rand(-0.002,0.002)
+      });
+    }
+  })();
+
+  function drawBackdrop(t, dim){
+    var g = sctx.createRadialGradient(cx(),H*0.35,0, cx(),H*0.35, Math.max(W,H)*0.85);
+    g.addColorStop(0,'#0c1030');
+    g.addColorStop(0.55,'#070914');
+    g.addColorStop(1,'#020309');
+    sctx.fillStyle = g;
+    sctx.fillRect(0,0,W,H);
+
+    var baseAlpha = dim===undefined ? 1 : dim;
+    for(var i=0;i<stars.length;i++){
+      var s = stars[i];
+      var tw = reduced ? 0.85 : 0.55 + 0.45*Math.sin(t*0.001*s.speed + s.phase);
+      sctx.globalAlpha = clamp(tw,0,1) * baseAlpha;
+      sctx.fillStyle = '#f4f0e6';
+      sctx.beginPath();
+      sctx.arc(s.x*W, s.y*H, s.r, 0, Math.PI*2);
+      sctx.fill();
+    }
+    sctx.globalAlpha = 1;
+  }
+
+  function glow(x,y,r,color,strength){
+    var g = sctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0, color);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    sctx.globalAlpha = strength===undefined?1:strength;
+    sctx.fillStyle = g;
+    sctx.beginPath();
+    sctx.arc(x,y,r,0,Math.PI*2);
+    sctx.fill();
+    sctx.globalAlpha = 1;
+  }
+
+  // ================= SCENE 1 : CONSTELLATIONS =================
+  var CONSTELLATIONS = [
+    { name:'Orion', myth:'The Hunter — anchored by red supergiant Betelgeuse and blue-giant Rigel, Orion is visible from nearly everywhere on Earth.', meta:[['BRIGHTEST','Rigel · 860 ly'],['SEASON','Winter']],
+      pts:[[-0.40,0.60],[0.35,0.55],[-0.12,0.05],[0,0],[0.12,-0.05],[-0.35,-0.60],[0.30,-0.65]],
+      lines:[[0,2],[1,4],[2,3],[3,4],[2,5],[4,6]] },
+    { name:'Ursa Major', myth:'Home to the Big Dipper — the two outer bowl stars, Dubhe and Merak, point straight to Polaris, the North Star.', meta:[['BRIGHTEST','Alioth · 83 ly'],['SEASON','Spring']],
+      pts:[[-0.55,0.45],[-0.55,0.05],[-0.22,-0.05],[-0.12,0.30],[0.18,0.35],[0.45,0.40],[0.68,0.55]],
+      lines:[[0,1],[1,2],[2,3],[3,0],[3,4],[4,5],[5,6]] },
+    { name:'Cassiopeia', myth:'The vain queen of Greek myth, forever circling the celestial pole on her throne, traced by a glowing W.', meta:[['BRIGHTEST','Schedar · 228 ly'],['SEASON','Autumn']],
+      pts:[[-0.60,0.0],[-0.30,0.40],[0,0.05],[0.30,0.40],[0.60,0.0]],
+      lines:[[0,1],[1,2],[2,3],[3,4]] },
+    { name:'Cygnus', myth:'The Swan glides along the Milky Way; its tail star Deneb, one of the most luminous known, sits roughly 2,600 light-years away.', meta:[['BRIGHTEST','Deneb · 2,600 ly'],['SEASON','Summer']],
+      pts:[[0,0.62],[0,-0.62],[-0.45,0.10],[0.45,-0.10],[0,0]],
+      lines:[[0,4],[4,1],[2,4],[4,3]] },
+    { name:'Leo', myth:'A backwards question mark traces the lion\'s mane; its heart, Regulus, is a blue star spinning so fast it bulges at the equator.', meta:[['BRIGHTEST','Regulus · 79 ly'],['SEASON','Spring']],
+      pts:[[-0.50,-0.30],[-0.58,0.10],[-0.38,0.42],[-0.10,0.46],[0.06,0.30],[0.25,0.15],[0.55,-0.15]],
+      lines:[[0,1],[1,2],[2,3],[3,4],[4,0],[0,5],[5,6]] },
+    { name:'Scorpius', myth:'A curling tail guarded by Antares, a red supergiant so vast it could swallow the orbit of Mars.', meta:[['BRIGHTEST','Antares · 550 ly'],['SEASON','Summer']],
+      pts:[[-0.55,0.50],[-0.38,0.30],[-0.26,0.05],[-0.10,-0.15],[0.10,-0.35],[0.35,-0.45],[0.55,-0.28],[0.60,-0.02]],
+      lines:[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7]], special:2 }
+  ];
+  var BEAT1 = reduced ? 5.2 : 4.6;
+  var SCENE1_DUR = CONSTELLATIONS.length * BEAT1;
+
+  function drawConstellation(idx, tIn){
+    var c = CONSTELLATIONS[idx];
+    var s = stageScale()*0.36;
+    var ox = cx(), oy = cy();
+    var drawT = clamp(tIn/1.4, 0, 1);
+    var lineReveal = easeOutCubic(drawT);
+    var pts = c.pts.map(function(p){ return [ox + p[0]*s, oy - p[1]*s]; });
+
+    sctx.lineWidth = 1.6;
+    sctx.strokeStyle = 'rgba(255,180,84,0.75)';
+    sctx.shadowColor = 'rgba(255,180,84,0.55)';
+    sctx.shadowBlur = 8;
+    var totalLines = c.lines.length;
+    var revealCount = lineReveal * totalLines;
+    for(var i=0;i<totalLines;i++){
+      var seg = c.lines[i];
+      var segT = clamp(revealCount - i, 0, 1);
+      if(segT<=0) continue;
+      var a = pts[seg[0]], b = pts[seg[1]];
+      var bx = lerp(a[0], b[0], segT);
+      var by = lerp(a[1], b[1], segT);
+      sctx.beginPath();
+      sctx.moveTo(a[0],a[1]);
+      sctx.lineTo(bx,by);
+      sctx.stroke();
+    }
+    sctx.shadowBlur = 0;
+
+    for(var j=0;j<pts.length;j++){
+      var appear = clamp((lineReveal*totalLines) - j*0.4, 0, 1);
+      if(j===0) appear = clamp(drawT*3,0,1);
+      var isSpecial = c.special===j;
+      var rr = isSpecial ? 3.6 : 2.4;
+      glow(pts[j][0], pts[j][1], isSpecial?26:14, isSpecial?'rgba(255,93,93,0.9)':'rgba(244,240,230,0.9)', appear*0.9);
+      sctx.globalAlpha = appear;
+      sctx.fillStyle = isSpecial ? '#ff8a7a' : '#fdf8ee';
+      sctx.beginPath();
+      sctx.arc(pts[j][0], pts[j][1], rr, 0, Math.PI*2);
+      sctx.fill();
+      sctx.globalAlpha = 1;
+    }
+  }
+
+  function sceneConstellations(t){
+    drawBackdrop(t);
+    var idx = Math.min(CONSTELLATIONS.length-1, Math.floor(t/1000/BEAT1));
+    var beatT = (t/1000) - idx*BEAT1;
+    drawConstellation(idx, beatT);
+    return {
+      eyebrow:'NIGHT SKY · ' + (idx+1) + '/' + CONSTELLATIONS.length,
+      title: CONSTELLATIONS[idx].name,
+      fact: CONSTELLATIONS[idx].myth,
+      meta: CONSTELLATIONS[idx].meta,
+      accent:'var(--nova)',
+      beatKey:'c'+idx
+    };
+  }
+
+  // ================= SCENE 2 : SOLAR SYSTEM =================
+  var PLANETS = [
+    { name:'Mercury', color:'#b7ada0', r:60, size:3.4, speed:4.15, fact:'The smallest planet swings around the Sun in just 88 days, baking at 430°C by day and freezing at -180°C by night.', meta:[['DIAMETER','4,879 km'],['DISTANCE','0.39 AU']] },
+    { name:'Venus', color:'#e8c07d', r:84, size:5.4, speed:1.62, fact:'Wrapped in thick clouds of sulfuric acid, Venus is the hottest planet — its runaway greenhouse effect traps heat at 465°C.', meta:[['DIAMETER','12,104 km'],['DISTANCE','0.72 AU']] },
+    { name:'Earth', color:'#5fb0e6', r:108, size:5.7, speed:1.0, fact:'The only known world with liquid water on its surface, plate tectonics, and life — home.', meta:[['DIAMETER','12,742 km'],['DISTANCE','1.00 AU']] },
+    { name:'Mars', color:'#c1603f', r:134, size:4.2, speed:0.53, fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
+    { name:'Jupiter', color:'#d8ab7e', r:176, size:15.5, speed:0.084, fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
+    { name:'Saturn', color:'#e3cb95', r:222, size:13.2, speed:0.034, ring:true, fact:'Famous for its dazzling rings of ice and rock, Saturn is so light it would float in a bathtub large enough to hold it.', meta:[['DIAMETER','116,460 km'],['MOONS','146 known']] },
+    { name:'Uranus', color:'#9fdce0', r:266, size:9.0, speed:0.012, fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
+    { name:'Neptune', color:'#5f79e0', r:306, size:8.7, speed:0.006, fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
+  ];
+  var BEAT2 = reduced ? 4.6 : 4.0;
+  var SCENE2_DUR = PLANETS.length * BEAT2;
+
+  function sceneSolarSystem(t, tGlobal){
+    drawBackdrop(t, 0.5);
+    var ox = cx(), oy = cy();
+    var featured = Math.min(PLANETS.length-1, Math.floor(t/1000/BEAT2));
+
+    glow(ox,oy,140,'rgba(255,196,120,0.9)',1);
+    var sunPulse = 30 + Math.sin(tGlobal*0.002)*1.6;
+    sctx.fillStyle = '#ffd88a';
+    sctx.beginPath(); sctx.arc(ox,oy,sunPulse,0,Math.PI*2); sctx.fill();
+
+    for(var i=0;i<PLANETS.length;i++){
+      var p = PLANETS[i];
+      sctx.strokeStyle = 'rgba(244,240,230,0.10)';
+      sctx.lineWidth = 1;
+      sctx.beginPath();
+      sctx.ellipse(ox,oy,p.r,p.r*0.94,0,0,Math.PI*2);
+      sctx.stroke();
+
+      var ang = (tGlobal*0.00035*p.speed) + i*1.7;
+      var px = ox + Math.cos(ang)*p.r;
+      var py = oy + Math.sin(ang)*p.r*0.94;
+      var isFeatured = i===featured;
+
+      if(p.ring){
+        sctx.save();
+        sctx.translate(px,py);
+        sctx.rotate(-0.4);
+        sctx.strokeStyle = 'rgba(227,203,149,0.85)';
+        sctx.lineWidth = 2;
+        sctx.beginPath();
+        sctx.ellipse(0,0,p.size*1.9,p.size*0.6,0,0,Math.PI*2);
+        sctx.stroke();
+        sctx.restore();
+      }
+
+      if(isFeatured){
+        glow(px,py,p.size*4.5,'rgba(255,255,255,0.35)',0.9);
+        sctx.strokeStyle = 'rgba(255,180,84,0.85)';
+        sctx.lineWidth = 1.4;
+        sctx.beginPath();
+        sctx.arc(px,py,p.size+9,0,Math.PI*2);
+        sctx.stroke();
+      }
+
+      sctx.fillStyle = p.color;
+      sctx.beginPath();
+      sctx.arc(px,py,p.size,0,Math.PI*2);
+      sctx.fill();
+    }
+
+    var p = PLANETS[featured];
+    return {
+      eyebrow:'SOLAR SYSTEM · ' + (featured+1) + '/' + PLANETS.length,
+      title: p.name,
+      fact: p.fact,
+      meta: p.meta,
+      accent:'var(--nova)',
+      beatKey:'p'+featured
+    };
+  }
+
+  // ================= SCENE 3 : SCALE OF THE UNIVERSE =================
+  var SCALES = [
+    { label:'Earth', num:'12,742', unit:'KM ACROSS', title:'A Pale Blue Marble',
+      fact:'Our home world spans 12,742 kilometers — light circles it seven times in a single second.',
+      meta:[['MASS','5.97 × 10²⁴ kg'],['AGE','4.5 billion yrs']], draw:'earth' },
+    { label:'Solar System', num:'9.1', unit:'BILLION KM (NEPTUNE)', title:'The Sun\'s Domain',
+      fact:'Shrink the Sun to a grapefruit and Earth becomes a grain of sand nine meters away — Neptune would sit half a kilometer out.',
+      meta:[['DIAMETER','~9.1 billion km'],['LIGHT TIME','8.4 hours']], draw:'solar' },
+    { label:'Nearby Stars', num:'4.25', unit:'LIGHT-YEARS TO PROXIMA', title:'The Neighborhood',
+      fact:'Proxima Centauri, the nearest star beyond the Sun, is 4.25 light-years away — a signal sent today would arrive in 2030.',
+      meta:[['NEAREST STAR','Proxima Cen'],['TRAVEL TIME','~73,000 yrs by probe']], draw:'stars' },
+    { label:'Milky Way', num:'100,000', unit:'LIGHT-YEARS ACROSS', title:'Our Galaxy',
+      fact:'Some 100–400 billion stars spiral through the Milky Way — our Sun takes 230 million years to complete one orbit.',
+      meta:[['STARS','100–400 billion'],['SUN\'S ORBIT','230 million yrs']], draw:'galaxy' },
+    { label:'Local Group', num:'10', unit:'MILLION LIGHT-YEARS WIDE', title:'A Cluster of Galaxies',
+      fact:'The Milky Way is one of 80+ galaxies in the Local Group — and it\'s on a slow collision course with Andromeda.',
+      meta:[['MEMBER GALAXIES','80+'],['ANDROMEDA ETA','~4.5 billion yrs']], draw:'localgroup' },
+    { label:'Observable Universe', num:'93', unit:'BILLION LIGHT-YEARS WIDE', title:'The Edge of the Knowable',
+      fact:'Beyond roughly 93 billion light-years, light simply hasn\'t had time to reach us — the true universe may be far larger, or infinite.',
+      meta:[['GALAXIES','~2 trillion'],['AGE OF LIGHT','13.8 billion yrs']], draw:'cosmicweb' }
+  ];
+  var BEAT3 = reduced ? 5.4 : 4.7;
+  var SCENE3_DUR = SCALES.length * BEAT3;
+
+  var galaxyPts = null, webPts = null, localGroupPts = null, nearbyStarPts = null;
+  function ensureScale3Data(){
+    if(!galaxyPts){
+      galaxyPts = [];
+      for(var i=0;i<420;i++){
+        var arm = i%3;
+        var t = Math.pow(Math.random(),0.6)*1;
+        var ang = t*5.2 + arm*(Math.PI*2/3) + rand(-0.25,0.25);
+        var rr = t*0.46;
+        galaxyPts.push([Math.cos(ang)*rr, Math.sin(ang)*rr*0.55]);
+      }
+    }
+    if(!webPts){
+      webPts = [];
+      for(var j=0;j<160;j++){
+        webPts.push([rand(-0.5,0.5), rand(-0.5,0.5), rand(1,3)]);
+      }
+    }
+    if(!localGroupPts){
+      localGroupPts = [
+        [0,0,26,'Milky Way'], [0.32,-0.08,20,'Andromeda'], [-0.24,0.18,9,'Triangulum'],
+        [0.12,0.22,4,''], [-0.1,-0.24,3,''], [0.3,0.15,3,''], [-0.34,-0.05,4,'']
+      ];
+    }
+    if(!nearbyStarPts){
+      nearbyStarPts = [
+        [0,0,'Sun',4.2], [0.18,0.12,'Proxima Cen',2.4], [0.22,0.10,'',1.6],
+        [-0.3,-0.2,'Sirius',3.2], [0.36,-0.28,'',1.8], [-0.12,0.34,'',1.6],
+        [0.4,0.05,'',1.4], [-0.38,0.22,'',1.6], [0.06,-0.38,'',1.8]
+      ];
+    }
+  }
+
+  function drawScale3(idx, tIn, tGlobal){
+    ensureScale3Data();
+    var ox = cx(), oy = cy();
+    var s = stageScale()*0.4;
+    var appear = easeOutCubic(clamp(tIn/1.0,0,1));
+
+    if(SCALES[idx].draw==='earth'){
+      glow(ox,oy,s*0.55,'rgba(95,176,230,0.35)',appear);
+      sctx.fillStyle = '#5fb0e6';
+      sctx.beginPath(); sctx.arc(ox,oy, s*0.28*appear, 0, Math.PI*2); sctx.fill();
+      sctx.strokeStyle='rgba(255,255,255,0.25)';
+      sctx.beginPath(); sctx.arc(ox,oy,s*0.28*appear+18,0,Math.PI*2); sctx.stroke();
+    } else if(SCALES[idx].draw==='solar'){
+      for(var i=0;i<6;i++){
+        var rr = s*(0.08+i*0.075);
+        sctx.strokeStyle='rgba(244,240,230,0.14)';
+        sctx.beginPath(); sctx.arc(ox,oy,rr*appear,0,Math.PI*2); sctx.stroke();
+        var ang = tGlobal*0.0003*(6-i) + i;
+        sctx.fillStyle = i===2?'#5fb0e6':'#e3cb95';
+        sctx.beginPath(); sctx.arc(ox+Math.cos(ang)*rr*appear, oy+Math.sin(ang)*rr*0.9*appear, i===2?3.2:2.4, 0, Math.PI*2); sctx.fill();
+      }
+      glow(ox,oy,50,'rgba(255,196,120,0.9)',appear);
+      sctx.fillStyle='#ffd88a'; sctx.beginPath(); sctx.arc(ox,oy,10,0,Math.PI*2); sctx.fill();
+    } else if(SCALES[idx].draw==='stars'){
+      for(var k=0;k<nearbyStarPts.length;k++){
+        var sp = nearbyStarPts[k];
+        var px = ox+sp[0]*s*1.6, py = oy+sp[1]*s*1.6;
+        glow(px,py,sp[3]*6,'rgba(255,255,255,0.5)',appear);
+        sctx.fillStyle='#fdf8ee';
+        sctx.beginPath(); sctx.arc(px,py,sp[3]*appear,0,Math.PI*2); sctx.fill();
+      }
+    } else if(SCALES[idx].draw==='galaxy'){
+      sctx.save();
+      sctx.translate(ox,oy);
+      sctx.rotate(tGlobal*0.00004);
+      glow(0,0,s*0.5,'rgba(143,125,255,0.35)',appear);
+      for(var g=0; g<galaxyPts.length; g++){
+        var gp = galaxyPts[g];
+        sctx.globalAlpha = appear*0.85;
+        sctx.fillStyle = g%5===0 ? '#ffe9c2' : '#cfd0ff';
+        sctx.beginPath(); sctx.arc(gp[0]*s*1.7, gp[1]*s*1.7, g%7===0?1.8:1.1, 0, Math.PI*2); sctx.fill();
+      }
+      sctx.globalAlpha=1;
+      sctx.fillStyle='#ffd88a';
+      sctx.beginPath(); sctx.arc(s*0.32, s*0.06, 3, 0, Math.PI*2); sctx.fill();
+      sctx.restore();
+    } else if(SCALES[idx].draw==='localgroup'){
+      for(var l=0;l<localGroupPts.length;l++){
+        var lp = localGroupPts[l];
+        var px2 = ox+lp[0]*s*1.4, py2 = oy+lp[1]*s*1.4;
+        glow(px2,py2,lp[2]*2.2,'rgba(180,170,255,0.5)',appear);
+        sctx.fillStyle = l<3 ? '#f4f0e6' : 'rgba(200,200,255,0.6)';
+        sctx.beginPath(); sctx.arc(px2,py2,lp[2]*0.35*appear,0,Math.PI*2); sctx.fill();
+      }
+    } else if(SCALES[idx].draw==='cosmicweb'){
+      for(var w=0;w<webPts.length;w++){
+        var wp = webPts[w];
+        sctx.globalAlpha = appear*0.8;
+        sctx.fillStyle = w%9===0 ? '#5fe3e6' : '#e8e6ff';
+        sctx.beginPath(); sctx.arc(ox+wp[0]*s*2.1, oy+wp[1]*s*2.1, wp[2]*0.7, 0, Math.PI*2); sctx.fill();
+      }
+      sctx.globalAlpha=1;
+    }
+  }
+
+  function sceneScale(t, tGlobal){
+    drawBackdrop(t, 0.4);
+    var idx = Math.min(SCALES.length-1, Math.floor(t/1000/BEAT3));
+    var beatT = (t/1000) - idx*BEAT3;
+    drawScale3(idx, beatT, tGlobal);
+    var sc = SCALES[idx];
+    document.getElementById('scaleNum').textContent = sc.num;
+    document.getElementById('scaleUnit').textContent = sc.unit;
+    return {
+      eyebrow:'SCALE OF THE UNIVERSE · ' + sc.label.toUpperCase(),
+      title: sc.title,
+      fact: sc.fact,
+      meta: sc.meta,
+      accent:'var(--signal)',
+      beatKey:'s'+idx,
+      showScale:true
+    };
+  }
+
+  // ================= SCENE 4 : FRONTIER DISCOVERIES =================
+  var apodState = { tried:false, ok:false, url:null };
+  function tryFetchAPOD(){
+    if(apodState.tried) return;
+    apodState.tried = true;
+    if(!navigator.onLine){ return; }
+    var ctrl = (typeof AbortController!=='undefined') ? new AbortController() : null;
+    var timer = setTimeout(function(){ if(ctrl) ctrl.abort(); }, 4000);
+    fetch('https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY', ctrl?{signal:ctrl.signal}:{})
+      .then(function(r){ return r.ok ? r.json() : Promise.reject(); })
+      .then(function(data){
+        clearTimeout(timer);
+        if(data && data.media_type==='image' && data.url){
+          var img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = function(){ apodState.ok = true; apodState.img = img; apodState.title = data.title; };
+          img.src = data.url;
+        }
+      })
+      .catch(function(){ clearTimeout(timer); });
+  }
+
+  var FRONTIER = [
+    { key:'blackhole', name:'Sagittarius A*', fact:'Our galaxy\'s supermassive black hole — 4 million times the Sun\'s mass — was finally imaged in 2022.', meta:[['MASS','4.3 million M☉'],['DISTANCE','26,000 ly']] },
+    { key:'trappist', name:'TRAPPIST-1', fact:'Seven Earth-sized worlds circle this cool dwarf star; three orbit in the zone where liquid water could survive.', meta:[['PLANETS','7 confirmed'],['DISTANCE','40 ly']] },
+    { key:'ligo', name:'Gravitational Waves', fact:'In 2015, LIGO detected ripples in spacetime from two black holes that collided 1.3 billion years ago.', meta:[['FIRST DETECTION','Sept 14, 2015'],['SIGNAL','GW150914']] },
+    { key:'jwst', name:'James Webb Space Telescope', fact:'Webb\'s gold-coated mirror spans 6.5 meters across 18 hexagonal segments, seeing farther back in time than any telescope before it.', meta:[['MIRROR','6.5 m, 18 segments'],['ORBIT','1.5M km from Earth']] },
+    { key:'apod', name:'Deep Field', fact:'Point a telescope at a patch of sky the size of a grain of sand held at arm\'s length — Hubble found over 10,000 galaxies there.', meta:[['GALAXIES IN FIELD','10,000+'],['SOURCE','NASA APOD']] }
+  ];
+  var BEAT4 = reduced ? 5.2 : 4.5;
+  var SCENE4_DUR = FRONTIER.length * BEAT4;
+
+  function drawFrontier(idx, tIn, tGlobal){
+    var ox=cx(), oy=cy();
+    var s = stageScale()*0.32;
+    var appear = easeOutCubic(clamp(tIn/1.0,0,1));
+    var item = FRONTIER[idx];
+
+    if(item.key==='blackhole'){
+      sctx.save();
+      sctx.translate(ox,oy);
+      for(var i=0;i<3;i++){
+        sctx.strokeStyle = 'rgba(255,180,84,'+(0.55-i*0.15)+')';
+        sctx.lineWidth = 10-i*3;
+        sctx.beginPath();
+        sctx.ellipse(0,0, (s*0.75-i*14)*appear, (s*0.22-i*4)*appear, 0.35+tGlobal*0.00008, 0, Math.PI*1.7);
+        sctx.stroke();
+      }
+      sctx.fillStyle='#020309';
+      sctx.beginPath(); sctx.arc(0,0, s*0.22*appear, 0, Math.PI*2); sctx.fill();
+      sctx.restore();
+    } else if(item.key==='trappist'){
+      glow(ox,oy,40,'rgba(255,120,90,0.8)',appear);
+      sctx.fillStyle='#ff8a5c'; sctx.beginPath(); sctx.arc(ox,oy,9,0,Math.PI*2); sctx.fill();
+      for(var p=0;p<7;p++){
+        var rr = s*(0.16+p*0.075);
+        sctx.strokeStyle='rgba(244,240,230,0.12)';
+        sctx.beginPath(); sctx.arc(ox,oy,rr*appear,0,Math.PI*2); sctx.stroke();
+        var ang = tGlobal*0.0006*(7-p) + p*1.3;
+        var inHZ = p>=2 && p<=4;
+        sctx.fillStyle = inHZ ? '#5fe3e6' : '#c7c9e8';
+        sctx.beginPath(); sctx.arc(ox+Math.cos(ang)*rr*appear, oy+Math.sin(ang)*rr*0.9*appear, 2.6, 0, Math.PI*2); sctx.fill();
+      }
+    } else if(item.key==='ligo'){
+      sctx.strokeStyle='rgba(95,227,230,0.5)';
+      for(var r=1;r<9;r++){
+        var rad = r*24*appear + (tGlobal*0.02)%24;
+        sctx.globalAlpha = clamp(1-r/9,0,1)*appear;
+        sctx.beginPath();
+        sctx.ellipse(ox,oy, rad, rad*0.45, 0, 0, Math.PI*2);
+        sctx.stroke();
+      }
+      sctx.globalAlpha=1;
+      sctx.fillStyle='#f4f0e6';
+      sctx.beginPath(); sctx.arc(ox-10,oy,4,0,Math.PI*2); sctx.fill();
+      sctx.beginPath(); sctx.arc(ox+10,oy,4,0,Math.PI*2); sctx.fill();
+    } else if(item.key==='jwst'){
+      var hexR = s*0.11;
+      var coords = [[0,0],[1,0],[-1,0],[0.5,0.87],[-0.5,0.87],[0.5,-0.87],[-0.5,-0.87]];
+      for(var h=0;h<coords.length;h++){
+        var hx = ox + coords[h][0]*hexR*1.85;
+        var hy = oy + coords[h][1]*hexR*1.85;
+        var a2 = clamp(appear*7 - h,0,1);
+        sctx.save();
+        sctx.globalAlpha = a2;
+        sctx.translate(hx,hy);
+        sctx.beginPath();
+        for(var v=0; v<6; v++){
+          var vx = Math.cos(v*Math.PI/3)*hexR*a2;
+          var vy = Math.sin(v*Math.PI/3)*hexR*a2;
+          if(v===0) sctx.moveTo(vx,vy); else sctx.lineTo(vx,vy);
+        }
+        sctx.closePath();
+        sctx.fillStyle='rgba(227,203,149,0.85)';
+        sctx.fill();
+        sctx.strokeStyle='rgba(5,6,13,0.6)';
+        sctx.lineWidth=2;
+        sctx.stroke();
+        sctx.restore();
+      }
+    } else if(item.key==='apod'){
+      if(apodState.ok && apodState.img){
+        var iw = s*1.9, ih = iw*(apodState.img.height/apodState.img.width);
+        sctx.globalAlpha = appear;
+        sctx.drawImage(apodState.img, ox-iw/2, oy-ih/2, iw, ih);
+        sctx.globalAlpha=1;
+      } else {
+        for(var d=0; d<70; d++){
+          var dx = ox + rand(-s,s), dy = oy + rand(-s*0.6,s*0.6);
+          sctx.globalAlpha = appear*rand(0.3,0.9);
+          sctx.fillStyle = Math.random()<0.15 ? '#ffe9c2' : '#cfd0ff';
+          sctx.beginPath(); sctx.arc(dx,dy, rand(0.6,2.2), 0, Math.PI*2); sctx.fill();
+        }
+        sctx.globalAlpha=1;
+      }
+    }
+  }
+
+  function sceneFrontier(t, tGlobal){
+    drawBackdrop(t, 0.45);
+    var idx = Math.min(FRONTIER.length-1, Math.floor(t/1000/BEAT4));
+    if(idx===4) tryFetchAPOD();
+    var beatT = (t/1000) - idx*BEAT4;
+    drawFrontier(idx, beatT, tGlobal);
+    var item = FRONTIER[idx];
+    var live = idx===4 && apodState.ok;
+    document.getElementById('liveBadge').classList.toggle('show', !!live);
+    return {
+      eyebrow:'FRONTIER DISCOVERIES · ' + (idx+1) + '/' + FRONTIER.length,
+      title: live ? apodState.title : item.name,
+      fact: item.fact,
+      meta: item.meta,
+      accent:'var(--nebula)',
+      beatKey:'f'+idx
+    };
+  }
+
+  // ================= SCENE MANAGER =================
+  var SCENES = [
+    { id:'sky', run:function(t,g){ return sceneConstellations(t); }, dur:SCENE1_DUR },
+    { id:'solar', run:function(t,g){ return sceneSolarSystem(t,g); }, dur:SCENE2_DUR },
+    { id:'scale', run:function(t,g){ return sceneScale(t,g); }, dur:SCENE3_DUR },
+    { id:'frontier', run:function(t,g){ return sceneFrontier(t,g); }, dur:SCENE4_DUR }
+  ];
+  var TOTAL = SCENES.reduce(function(a,s){return a+s.dur*1000;},0);
+
+  // dots
+  var dotsWrap = document.getElementById('dots');
+  SCENES.forEach(function(){
+    var d = document.createElement('div');
+    d.className = 'dot';
+    var i = document.createElement('i');
+    d.appendChild(i);
+    dotsWrap.appendChild(d);
+  });
+  var dotEls = dotsWrap.children;
+
+  var eyebrowEl = document.getElementById('eyebrow');
+  var titleEl = document.getElementById('title');
+  var factEl = document.getElementById('fact');
+  var metaEl = document.getElementById('meta');
+  var dockInner = document.getElementById('dockInner');
+  var scaleReadout = document.getElementById('scaleReadout');
+  var liveBadge = document.getElementById('liveBadge');
+
+  var lastBeatKey = null;
+  function applyCaption(info){
+    scaleReadout.classList.toggle('show', !!info.showScale);
+    if(!info.showScale && !(info.key==='apod')) { /* keep live badge controlled separately */ }
+    if(info.beatKey === lastBeatKey) return;
+    lastBeatKey = info.beatKey;
+    dockInner.classList.remove('show');
+    setTimeout(function(){
+      eyebrowEl.textContent = info.eyebrow;
+      eyebrowEl.style.color = info.accent;
+      titleEl.textContent = info.title;
+      factEl.textContent = info.fact;
+      metaEl.innerHTML = '';
+      (info.meta||[]).forEach(function(m){
+        var span = document.createElement('span');
+        span.innerHTML = m[0] + ' — <b style="color:' + info.accent + '">' + m[1] + '</b>';
+        metaEl.appendChild(span);
+      });
+      dockInner.classList.add('show');
+    }, reduced ? 10 : 180);
+  }
+
+  // ---------- warp transition ----------
+  var warpUntil = 0, warpStart = 0, warping = false;
+  var warpLines = [];
+  function beginWarp(){
+    if(reduced) return;
+    warping = true;
+    warpStart = performance.now();
+    warpUntil = warpStart + 900;
+    warpLines = [];
+    var n = 90;
+    for(var i=0;i<n;i++){
+      warpLines.push({ ang: Math.random()*Math.PI*2, speed: rand(0.6,1.4), len: rand(0.05,0.2) });
+    }
+  }
+  function drawWarp(now){
+    fctx.clearRect(0,0,W,H);
+    if(!warping) return;
+    var t = clamp((now-warpStart)/900, 0, 1);
+    if(t>=1){ warping=false; return; }
+    var intensity = t<0.5 ? easeOutCubic(t/0.5) : 1-easeOutCubic((t-0.5)/0.5);
+    var ox=cx(), oy=cy();
+    fctx.strokeStyle = 'rgba(255,238,210,' + (intensity*0.8) + ')';
+    fctx.lineWidth = 1.4;
+    for(var i=0;i<warpLines.length;i++){
+      var l = warpLines[i];
+      var dist = 30 + intensity*Math.max(W,H)*0.7*l.speed;
+      var len = intensity*l.len*Math.max(W,H);
+      var x1 = ox + Math.cos(l.ang)*dist;
+      var y1 = oy + Math.sin(l.ang)*dist;
+      var x2 = ox + Math.cos(l.ang)*(dist+len);
+      var y2 = oy + Math.sin(l.ang)*(dist+len);
+      fctx.beginPath();
+      fctx.moveTo(x1,y1);
+      fctx.lineTo(x2,y2);
+      fctx.stroke();
+    }
+    fctx.fillStyle = 'rgba(5,6,13,' + (intensity*0.35) + ')';
+    fctx.fillRect(0,0,W,H);
+  }
+
+  // ---------- main loop ----------
+  var startTime = performance.now();
+  var lastSceneIdx = -1;
+
+  function frame(now){
+    var elapsed = now - startTime;
+    var loopT = elapsed % TOTAL;
+
+    var acc = 0, sceneIdx = 0, sceneLocalMs = 0;
+    for(var i=0;i<SCENES.length;i++){
+      var durMs = SCENES[i].dur*1000;
+      if(loopT < acc+durMs){ sceneIdx = i; sceneLocalMs = loopT-acc; break; }
+      acc += durMs;
+    }
+
+    if(sceneIdx !== lastSceneIdx){
+      if(lastSceneIdx !== -1) beginWarp();
+      lastSceneIdx = sceneIdx;
+    }
+
+    for(var d=0; d<dotEls.length; d++){
+      var el = dotEls[d];
+      var innerI = el.querySelector('i');
+      if(d<sceneIdx){ el.className='dot done'; innerI.style.transition='none'; }
+      else if(d===sceneIdx){
+        el.className='dot active';
+        var frac = clamp(sceneLocalMs/(SCENES[d].dur*1000),0,1);
+        innerI.style.transition='none';
+        innerI.style.transform = 'scaleX(' + frac + ')';
+      } else { el.className='dot'; innerI.style.transition='none'; innerI.style.transform='scaleX(0)'; }
+    }
+
+    if(!(sceneIdx===2)) scaleReadout.classList.remove('show');
+    if(!(sceneIdx===3)) liveBadge.classList.remove('show');
+
+    var info = SCENES[sceneIdx].run(sceneLocalMs, elapsed);
+    applyCaption(info);
+    drawWarp(now);
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
