@@ -168,34 +168,6 @@
     return tex;
   }
 
-  function makeAtmosphere(size, colorHex, intensity, power){
-    var col = new THREE.Color(colorHex);
-    var mat = new THREE.ShaderMaterial({
-      uniforms: { glowColor:{value:col}, intensity:{value:intensity}, power:{value:power} },
-      vertexShader: [
-        'varying vec3 vNormal;',
-        'varying vec3 vViewDir;',
-        'void main(){',
-        '  vNormal = normalize(normalMatrix * normal);',
-        '  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);',
-        '  vViewDir = normalize(-mvPosition.xyz);',
-        '  gl_Position = projectionMatrix * mvPosition;',
-        '}'
-      ].join('\n'),
-      fragmentShader: [
-        'uniform vec3 glowColor; uniform float intensity; uniform float power;',
-        'varying vec3 vNormal; varying vec3 vViewDir;',
-        'void main(){',
-        '  float rim = 1.0 - max(dot(normalize(vNormal), normalize(vViewDir)), 0.0);',
-        '  float glow = pow(rim, power) * intensity;',
-        '  gl_FragColor = vec4(glowColor, glow);',
-        '}'
-      ].join('\n'),
-      transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, side:THREE.FrontSide
-    });
-    return new THREE.Mesh(new THREE.SphereGeometry(size, 28, 28), mat);
-  }
-
   function makeGlowSprite(tex, size, color, opacity){
     var mat = new THREE.SpriteMaterial({ map:tex, color:color!==undefined?color:0xffffff, transparent:true, opacity:opacity!==undefined?opacity:1, depthWrite:false, blending:THREE.AdditiveBlending });
     var s = new THREE.Sprite(mat);
@@ -389,28 +361,28 @@
 
   // ================= ACT 2 : SOLAR SYSTEM =================
   var PLANETS = [
-    { name:'Mercury', color:0xb7ada0, r:60, size:3.4, speed:4.15, inc:0.12, cam:'flyby', spin:0.5, atmo:null,
+    { name:'Mercury', color:0xb7ada0, r:60, size:3.4, speed:4.15, inc:0.12, cam:'flyby', spin:0.5,
       tex:{ base:'#a99b8c', craters:34 },
       fact:'The smallest planet swings around the Sun in just 88 days, baking at 430°C by day and freezing at -180°C by night.', meta:[['DIAMETER','4,879 km'],['DISTANCE','0.39 AU']] },
-    { name:'Venus', color:0xe8c07d, r:84, size:5.4, speed:1.62, inc:-0.06, cam:'flyby', spin:-0.25, atmo:{color:0xf5d98a, intensity:1.1, power:2.2},
+    { name:'Venus', color:0xe8c07d, r:84, size:5.4, speed:1.62, inc:-0.06, cam:'flyby', spin:-0.25,
       tex:{ base:'#e3bd7a', bands:[{y0:0.06,y1:0.28,color:'#f3d8a0',alpha:0.4},{y0:0.4,y1:0.58,color:'#caa055',alpha:0.35},{y0:0.7,y1:0.92,color:'#f3d8a0',alpha:0.35}], turbulence:7 },
       fact:'Wrapped in thick clouds of sulfuric acid, Venus is the hottest planet — its runaway greenhouse effect traps heat at 465°C.', meta:[['DIAMETER','12,104 km'],['DISTANCE','0.72 AU']] },
-    { name:'Earth', color:0x5fb0e6, r:108, size:5.7, speed:1.0, inc:0, cam:'distant', spin:2.2, atmo:{color:0x6fb8ff, intensity:0.9, power:3.0},
+    { name:'Earth', color:0x5fb0e6, r:108, size:5.7, speed:1.0, inc:0, cam:'distant', spin:2.2,
       tex:{ base:'#2f6fbd', blotches:12, blotchColor:'#4c8a44', clouds:11, cloudColor:'rgba(255,255,255,0.55)' },
       fact:'The only known world with liquid water on its surface, plate tectonics, and life — home.', meta:[['DIAMETER','12,742 km'],['DISTANCE','1.00 AU']] },
-    { name:'Mars', color:0xc1603f, r:134, size:4.2, speed:0.53, inc:0.09, cam:'flyby', spin:2.1, atmo:{color:0xe8a878, intensity:0.35, power:4.0},
+    { name:'Mars', color:0xc1603f, r:134, size:4.2, speed:0.53, inc:0.09, cam:'flyby', spin:2.1,
       tex:{ base:'#af5535', blotches:9, blotchColor:'#7a3620', polarCaps:true },
       fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
-    { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, cam:'orbit', spin:5.2, atmo:{color:0xf5dba8, intensity:0.6, power:3.2},
+    { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, cam:'orbit', spin:5.2,
       tex:{ base:'#d9ac80', bands:[{y0:0.08,y1:0.2,color:'#c28658',alpha:0.55},{y0:0.28,y1:0.4,color:'#f2d7ac',alpha:0.4},{y0:0.48,y1:0.6,color:'#ac6438',alpha:0.5},{y0:0.68,y1:0.8,color:'#f2d7ac',alpha:0.4}], turbulence:11, spot:{x:0.32,y:0.56,rx:0.1,ry:0.05,colorHex:'#b04830',alpha:0.85} },
       fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
-    { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, cam:'orbit', spin:4.7, atmo:{color:0xf0e0b0, intensity:0.55, power:3.2},
+    { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, cam:'orbit', spin:4.7,
       tex:{ base:'#e6cd98', bands:[{y0:0.14,y1:0.26,color:'#d6b56f',alpha:0.4},{y0:0.38,y1:0.48,color:'#f2e2b8',alpha:0.35},{y0:0.6,y1:0.72,color:'#d6b56f',alpha:0.35}], turbulence:6 },
       fact:'Famous for its dazzling rings of ice and rock, Saturn is so light it would float in a bathtub large enough to hold it.', meta:[['DIAMETER','116,460 km'],['MOONS','146 known']] },
-    { name:'Uranus', color:0x9fdce0, r:266, size:9.0, speed:0.012, inc:-0.1, cam:'distant', spin:3.3, atmo:{color:0xa8eaee, intensity:0.55, power:3.0},
+    { name:'Uranus', color:0x9fdce0, r:266, size:9.0, speed:0.012, inc:-0.1, cam:'distant', spin:3.3,
       tex:{ base:'#9edbdf', bands:[{y0:0.32,y1:0.46,color:'#b7e7ea',alpha:0.22},{y0:0.56,y1:0.7,color:'#89ccd0',alpha:0.22}], turbulence:2 },
       fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
-    { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, cam:'distant', spin:3.1, atmo:{color:0x6f8fff, intensity:0.7, power:2.8},
+    { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, cam:'distant', spin:3.1,
       tex:{ base:'#4665cc', bands:[{y0:0.2,y1:0.34,color:'#5c78dd',alpha:0.35},{y0:0.56,y1:0.7,color:'#37509e',alpha:0.35}], turbulence:8, spot:{x:0.62,y:0.4,rx:0.08,ry:0.055,colorHex:'#1c264e',alpha:0.7} },
       fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
   ];
@@ -458,11 +430,6 @@
     }
     var haloSpr = makeGlowSprite(glowWhite, p.size*4.5, 0xffffff, 0);
     g.add(haloSpr);
-    var atmoMesh = null;
-    if(p.atmo){
-      atmoMesh = makeAtmosphere(p.size*1.14, p.atmo.color, p.atmo.intensity, p.atmo.power);
-      g.add(atmoMesh);
-    }
     var moons = null;
     if(i===4){
       moons = [0.55, 0.85, 1.2].map(function(mr,mi){
@@ -473,7 +440,7 @@
     }
     act2.add(g);
     act2.add(ellipseLoop(p.r, p.r*0.96, 0x4be8ec, 0.10));
-    return { g:g, mesh:mesh, halo:haloSpr, atmo:atmoMesh, moons:moons, def:p, index:i };
+    return { g:g, mesh:mesh, halo:haloSpr, moons:moons, def:p, index:i };
   });
 
   function sceneAct2(t, tGlobal){
@@ -491,7 +458,6 @@
       rec.mesh.position.copy(world);
       rec.mesh.rotation.y = tGlobal*0.0004*rec.def.spin;
       rec.halo.position.copy(world);
-      if(rec.atmo) rec.atmo.position.copy(world);
       if(rec.moons){
         rec.moons.forEach(function(m){
           var ma = tGlobal*0.0016*m.speed + m.phase;
