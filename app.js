@@ -99,58 +99,70 @@
   var glowCyan = makeGlowTexture(0x8ff5f7);
   var glowWhite = makeGlowTexture(0xffffff);
 
+  function hexRgba(hex, a){
+    var col = new THREE.Color(hex);
+    return 'rgba('+Math.round(col.r*255)+','+Math.round(col.g*255)+','+Math.round(col.b*255)+','+a+')';
+  }
+  function softBlob(g, cx, cy, rx, ry, hex, alpha){
+    if(rx<=0 || ry<=0) return;
+    g.save();
+    g.translate(cx, cy);
+    g.scale(rx, ry);
+    var grad = g.createRadialGradient(0,0,0, 0,0,1);
+    grad.addColorStop(0, hexRgba(hex, alpha));
+    grad.addColorStop(0.65, hexRgba(hex, alpha*0.5));
+    grad.addColorStop(1, hexRgba(hex, 0));
+    g.fillStyle = grad;
+    g.beginPath(); g.arc(0,0,1,0,Math.PI*2); g.fill();
+    g.restore();
+  }
   function makePlanetTexture(spec){
-    var w = 256, h = 128;
-    var c = document.createElement('canvas'); c.width=w; c.height=h;
-    var g = c.getContext('2d');
-    g.fillStyle = spec.base; g.fillRect(0,0,w,h);
+    var w = 256, h = 128, sc = 3, W = w*sc, H = h*sc;
+    var big = document.createElement('canvas'); big.width=W; big.height=H;
+    var g = big.getContext('2d');
+    g.fillStyle = spec.base; g.fillRect(0,0,W,H);
+
     if(spec.bands){
       spec.bands.forEach(function(b){
-        g.globalAlpha = b.alpha!==undefined?b.alpha:1;
-        g.fillStyle = b.color;
-        g.fillRect(0, b.y0*h, w, (b.y1-b.y0)*h);
+        var cy = (b.y0+b.y1)/2*H, ry = Math.max(6,(b.y1-b.y0)/2*H*1.2);
+        softBlob(g, W/2, cy, W*0.7, ry, b.color, b.alpha!==undefined?b.alpha:0.5);
       });
-      g.globalAlpha = 1;
     }
     for(var i=0;i<(spec.turbulence||0);i++){
-      var y = rand(0,h);
-      g.strokeStyle = 'rgba(255,255,255,'+rand(0.03,0.09)+')';
-      g.lineWidth = rand(1,2.4);
+      var y = rand(0,H);
+      g.strokeStyle = 'rgba(255,255,255,'+rand(0.02,0.05)+')';
+      g.lineWidth = rand(3*sc*0.5,6*sc*0.5);
       g.beginPath(); g.moveTo(0,y);
-      for(var x=8;x<=w;x+=12){ y += rand(-1.6,1.6); g.lineTo(x,y); }
+      for(var x=16;x<=W;x+=22){ y += rand(-3,3); g.lineTo(x,y); }
       g.stroke();
     }
     if(spec.spot){
-      g.fillStyle = spec.spot.color;
-      g.beginPath(); g.ellipse(spec.spot.x*w, spec.spot.y*h, spec.spot.rx*w, spec.spot.ry*h, 0, 0, Math.PI*2); g.fill();
+      softBlob(g, spec.spot.x*W, spec.spot.y*H, spec.spot.rx*W, spec.spot.ry*H, spec.spot.colorHex, spec.spot.alpha!==undefined?spec.spot.alpha:0.75);
     }
     if(spec.craters){
       for(var k=0;k<spec.craters;k++){
-        g.fillStyle = 'rgba(0,0,0,'+rand(0.08,0.22)+')';
-        g.beginPath(); g.arc(rand(0,w), rand(0,h), rand(2,8), 0, Math.PI*2); g.fill();
-        g.fillStyle = 'rgba(255,255,255,'+rand(0.02,0.06)+')';
-        g.beginPath(); g.arc(rand(0,w), rand(0,h), rand(1,4), 0, Math.PI*2); g.fill();
+        var rr = rand(3,9)*sc*0.55;
+        softBlob(g, rand(0,W), rand(0,H), rr, rr, '#000000', rand(0.1,0.22));
       }
     }
     if(spec.blotches){
       for(var m=0;m<spec.blotches;m++){
-        g.globalAlpha = rand(0.4,0.8);
-        g.fillStyle = spec.blotchColor;
-        g.beginPath(); g.ellipse(rand(0,w), rand(h*0.12,h*0.88), rand(9,28), rand(5,14), rand(0,Math.PI), 0, Math.PI*2); g.fill();
+        softBlob(g, rand(0,W), rand(h*0.14,h*0.86)*sc, rand(9,24)*sc*0.6, rand(5,13)*sc*0.6, spec.blotchColor, rand(0.35,0.6));
       }
-      g.globalAlpha = 1;
     }
     if(spec.clouds){
       for(var n=0;n<spec.clouds;n++){
-        g.fillStyle = spec.cloudColor || 'rgba(255,255,255,0.4)';
-        g.beginPath(); g.ellipse(rand(0,w), rand(0,h), rand(12,34), rand(3,8), rand(0,Math.PI), 0, Math.PI*2); g.fill();
+        softBlob(g, rand(0,W), rand(0,H), rand(13,32)*sc*0.55, rand(4,9)*sc*0.55, '#ffffff', rand(0.2,0.4));
       }
     }
     if(spec.polarCaps){
-      g.fillStyle = '#f4f0e6';
-      g.beginPath(); g.ellipse(w/2, 0, w*0.45, h*0.12, 0, 0, Math.PI*2); g.fill();
-      g.beginPath(); g.ellipse(w/2, h, w*0.45, h*0.1, 0, 0, Math.PI*2); g.fill();
+      softBlob(g, W/2, 0, W*0.48, H*0.2, '#f4f0e6', 0.8);
+      softBlob(g, W/2, H, W*0.48, H*0.18, '#f4f0e6', 0.75);
     }
+    var c = document.createElement('canvas'); c.width=w; c.height=h;
+    var cg = c.getContext('2d');
+    cg.imageSmoothingEnabled = true;
+    cg.drawImage(big, 0, 0, w, h);
     var tex = new THREE.CanvasTexture(c);
     tex.wrapS = THREE.RepeatWrapping;
     return tex;
@@ -362,7 +374,7 @@
       tex:{ base:'#af5535', blotches:9, blotchColor:'#7a3620', polarCaps:true },
       fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
     { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, cam:'orbit', spin:5.2,
-      tex:{ base:'#d9ac80', bands:[{y0:0.08,y1:0.2,color:'#c28658',alpha:0.55},{y0:0.28,y1:0.4,color:'#f2d7ac',alpha:0.4},{y0:0.48,y1:0.6,color:'#ac6438',alpha:0.5},{y0:0.68,y1:0.8,color:'#f2d7ac',alpha:0.4}], turbulence:11, spot:{x:0.32,y:0.56,rx:0.09,ry:0.045,color:'rgba(176,72,48,0.8)'} },
+      tex:{ base:'#d9ac80', bands:[{y0:0.08,y1:0.2,color:'#c28658',alpha:0.55},{y0:0.28,y1:0.4,color:'#f2d7ac',alpha:0.4},{y0:0.48,y1:0.6,color:'#ac6438',alpha:0.5},{y0:0.68,y1:0.8,color:'#f2d7ac',alpha:0.4}], turbulence:11, spot:{x:0.32,y:0.56,rx:0.1,ry:0.05,colorHex:'#b04830',alpha:0.85} },
       fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
     { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, cam:'orbit', spin:4.7,
       tex:{ base:'#e6cd98', bands:[{y0:0.14,y1:0.26,color:'#d6b56f',alpha:0.4},{y0:0.38,y1:0.48,color:'#f2e2b8',alpha:0.35},{y0:0.6,y1:0.72,color:'#d6b56f',alpha:0.35}], turbulence:6 },
@@ -371,7 +383,7 @@
       tex:{ base:'#9edbdf', bands:[{y0:0.32,y1:0.46,color:'#b7e7ea',alpha:0.22},{y0:0.56,y1:0.7,color:'#89ccd0',alpha:0.22}], turbulence:2 },
       fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
     { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, cam:'distant', spin:3.1,
-      tex:{ base:'#4665cc', bands:[{y0:0.2,y1:0.34,color:'#5c78dd',alpha:0.35},{y0:0.56,y1:0.7,color:'#37509e',alpha:0.35}], turbulence:8, spot:{x:0.62,y:0.4,rx:0.07,ry:0.05,color:'rgba(28,38,86,0.6)'} },
+      tex:{ base:'#4665cc', bands:[{y0:0.2,y1:0.34,color:'#5c78dd',alpha:0.35},{y0:0.56,y1:0.7,color:'#37509e',alpha:0.35}], turbulence:8, spot:{x:0.62,y:0.4,rx:0.08,ry:0.055,colorHex:'#1c264e',alpha:0.7} },
       fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
   ];
   function planetCamera(p, featuredPos, beatT){
