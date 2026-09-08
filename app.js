@@ -99,6 +99,63 @@
   var glowCyan = makeGlowTexture(0x8ff5f7);
   var glowWhite = makeGlowTexture(0xffffff);
 
+  function makePlanetTexture(spec){
+    var w = 256, h = 128;
+    var c = document.createElement('canvas'); c.width=w; c.height=h;
+    var g = c.getContext('2d');
+    g.fillStyle = spec.base; g.fillRect(0,0,w,h);
+    if(spec.bands){
+      spec.bands.forEach(function(b){
+        g.globalAlpha = b.alpha!==undefined?b.alpha:1;
+        g.fillStyle = b.color;
+        g.fillRect(0, b.y0*h, w, (b.y1-b.y0)*h);
+      });
+      g.globalAlpha = 1;
+    }
+    for(var i=0;i<(spec.turbulence||0);i++){
+      var y = rand(0,h);
+      g.strokeStyle = 'rgba(255,255,255,'+rand(0.03,0.09)+')';
+      g.lineWidth = rand(1,2.4);
+      g.beginPath(); g.moveTo(0,y);
+      for(var x=8;x<=w;x+=12){ y += rand(-1.6,1.6); g.lineTo(x,y); }
+      g.stroke();
+    }
+    if(spec.spot){
+      g.fillStyle = spec.spot.color;
+      g.beginPath(); g.ellipse(spec.spot.x*w, spec.spot.y*h, spec.spot.rx*w, spec.spot.ry*h, 0, 0, Math.PI*2); g.fill();
+    }
+    if(spec.craters){
+      for(var k=0;k<spec.craters;k++){
+        g.fillStyle = 'rgba(0,0,0,'+rand(0.08,0.22)+')';
+        g.beginPath(); g.arc(rand(0,w), rand(0,h), rand(2,8), 0, Math.PI*2); g.fill();
+        g.fillStyle = 'rgba(255,255,255,'+rand(0.02,0.06)+')';
+        g.beginPath(); g.arc(rand(0,w), rand(0,h), rand(1,4), 0, Math.PI*2); g.fill();
+      }
+    }
+    if(spec.blotches){
+      for(var m=0;m<spec.blotches;m++){
+        g.globalAlpha = rand(0.4,0.8);
+        g.fillStyle = spec.blotchColor;
+        g.beginPath(); g.ellipse(rand(0,w), rand(h*0.12,h*0.88), rand(9,28), rand(5,14), rand(0,Math.PI), 0, Math.PI*2); g.fill();
+      }
+      g.globalAlpha = 1;
+    }
+    if(spec.clouds){
+      for(var n=0;n<spec.clouds;n++){
+        g.fillStyle = spec.cloudColor || 'rgba(255,255,255,0.4)';
+        g.beginPath(); g.ellipse(rand(0,w), rand(0,h), rand(12,34), rand(3,8), rand(0,Math.PI), 0, Math.PI*2); g.fill();
+      }
+    }
+    if(spec.polarCaps){
+      g.fillStyle = '#f4f0e6';
+      g.beginPath(); g.ellipse(w/2, 0, w*0.45, h*0.12, 0, 0, Math.PI*2); g.fill();
+      g.beginPath(); g.ellipse(w/2, h, w*0.45, h*0.1, 0, 0, Math.PI*2); g.fill();
+    }
+    var tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.RepeatWrapping;
+    return tex;
+  }
+
   function makeGlowSprite(tex, size, color, opacity){
     var mat = new THREE.SpriteMaterial({ map:tex, color:color!==undefined?color:0xffffff, transparent:true, opacity:opacity!==undefined?opacity:1, depthWrite:false, blending:THREE.AdditiveBlending });
     var s = new THREE.Sprite(mat);
@@ -292,14 +349,30 @@
 
   // ================= ACT 2 : SOLAR SYSTEM =================
   var PLANETS = [
-    { name:'Mercury', color:0xb7ada0, r:60, size:3.4, speed:4.15, inc:0.12, cam:'flyby', fact:'The smallest planet swings around the Sun in just 88 days, baking at 430°C by day and freezing at -180°C by night.', meta:[['DIAMETER','4,879 km'],['DISTANCE','0.39 AU']] },
-    { name:'Venus', color:0xe8c07d, r:84, size:5.4, speed:1.62, inc:-0.06, cam:'flyby', fact:'Wrapped in thick clouds of sulfuric acid, Venus is the hottest planet — its runaway greenhouse effect traps heat at 465°C.', meta:[['DIAMETER','12,104 km'],['DISTANCE','0.72 AU']] },
-    { name:'Earth', color:0x5fb0e6, r:108, size:5.7, speed:1.0, inc:0, cam:'distant', fact:'The only known world with liquid water on its surface, plate tectonics, and life — home.', meta:[['DIAMETER','12,742 km'],['DISTANCE','1.00 AU']] },
-    { name:'Mars', color:0xc1603f, r:134, size:4.2, speed:0.53, inc:0.09, cam:'flyby', fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
-    { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, cam:'orbit', fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
-    { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, cam:'orbit', fact:'Famous for its dazzling rings of ice and rock, Saturn is so light it would float in a bathtub large enough to hold it.', meta:[['DIAMETER','116,460 km'],['MOONS','146 known']] },
-    { name:'Uranus', color:0x9fdce0, r:266, size:9.0, speed:0.012, inc:-0.1, cam:'distant', fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
-    { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, cam:'distant', fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
+    { name:'Mercury', color:0xb7ada0, r:60, size:3.4, speed:4.15, inc:0.12, cam:'flyby', spin:0.5,
+      tex:{ base:'#a99b8c', craters:34 },
+      fact:'The smallest planet swings around the Sun in just 88 days, baking at 430°C by day and freezing at -180°C by night.', meta:[['DIAMETER','4,879 km'],['DISTANCE','0.39 AU']] },
+    { name:'Venus', color:0xe8c07d, r:84, size:5.4, speed:1.62, inc:-0.06, cam:'flyby', spin:-0.25,
+      tex:{ base:'#e3bd7a', bands:[{y0:0.06,y1:0.28,color:'#f3d8a0',alpha:0.4},{y0:0.4,y1:0.58,color:'#caa055',alpha:0.35},{y0:0.7,y1:0.92,color:'#f3d8a0',alpha:0.35}], turbulence:7 },
+      fact:'Wrapped in thick clouds of sulfuric acid, Venus is the hottest planet — its runaway greenhouse effect traps heat at 465°C.', meta:[['DIAMETER','12,104 km'],['DISTANCE','0.72 AU']] },
+    { name:'Earth', color:0x5fb0e6, r:108, size:5.7, speed:1.0, inc:0, cam:'distant', spin:2.2,
+      tex:{ base:'#2f6fbd', blotches:12, blotchColor:'#4c8a44', clouds:11, cloudColor:'rgba(255,255,255,0.55)' },
+      fact:'The only known world with liquid water on its surface, plate tectonics, and life — home.', meta:[['DIAMETER','12,742 km'],['DISTANCE','1.00 AU']] },
+    { name:'Mars', color:0xc1603f, r:134, size:4.2, speed:0.53, inc:0.09, cam:'flyby', spin:2.1,
+      tex:{ base:'#af5535', blotches:9, blotchColor:'#7a3620', polarCaps:true },
+      fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
+    { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, cam:'orbit', spin:5.2,
+      tex:{ base:'#d9ac80', bands:[{y0:0.08,y1:0.2,color:'#c28658',alpha:0.55},{y0:0.28,y1:0.4,color:'#f2d7ac',alpha:0.4},{y0:0.48,y1:0.6,color:'#ac6438',alpha:0.5},{y0:0.68,y1:0.8,color:'#f2d7ac',alpha:0.4}], turbulence:11, spot:{x:0.32,y:0.56,rx:0.09,ry:0.045,color:'rgba(176,72,48,0.8)'} },
+      fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
+    { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, cam:'orbit', spin:4.7,
+      tex:{ base:'#e6cd98', bands:[{y0:0.14,y1:0.26,color:'#d6b56f',alpha:0.4},{y0:0.38,y1:0.48,color:'#f2e2b8',alpha:0.35},{y0:0.6,y1:0.72,color:'#d6b56f',alpha:0.35}], turbulence:6 },
+      fact:'Famous for its dazzling rings of ice and rock, Saturn is so light it would float in a bathtub large enough to hold it.', meta:[['DIAMETER','116,460 km'],['MOONS','146 known']] },
+    { name:'Uranus', color:0x9fdce0, r:266, size:9.0, speed:0.012, inc:-0.1, cam:'distant', spin:3.3,
+      tex:{ base:'#9edbdf', bands:[{y0:0.32,y1:0.46,color:'#b7e7ea',alpha:0.22},{y0:0.56,y1:0.7,color:'#89ccd0',alpha:0.22}], turbulence:2 },
+      fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
+    { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, cam:'distant', spin:3.1,
+      tex:{ base:'#4665cc', bands:[{y0:0.2,y1:0.34,color:'#5c78dd',alpha:0.35},{y0:0.56,y1:0.7,color:'#37509e',alpha:0.35}], turbulence:8, spot:{x:0.62,y:0.4,rx:0.07,ry:0.05,color:'rgba(28,38,86,0.6)'} },
+      fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
   ];
   function planetCamera(p, featuredPos, beatT){
     var outward = featuredPos.clone().normalize();
@@ -336,7 +409,7 @@
   var act2Planets = PLANETS.map(function(p, i){
     var g = new THREE.Group();
     g.rotation.x = 0; g.rotation.z = p.inc;
-    var mesh = new THREE.Mesh(new THREE.SphereGeometry(p.size, 24, 24), new THREE.MeshStandardMaterial({ color:p.color, roughness:0.85, metalness:0.05 }));
+    var mesh = new THREE.Mesh(new THREE.SphereGeometry(p.size, 32, 32), new THREE.MeshStandardMaterial({ map:makePlanetTexture(p.tex), roughness:0.85, metalness:0.05 }));
     g.add(mesh);
     if(p.ring){
       var ring = new THREE.Mesh(new THREE.RingGeometry(p.size*1.4, p.size*2.2, 48), new THREE.MeshBasicMaterial({ color:0xe3cb95, side:THREE.DoubleSide, transparent:true, opacity:0.75 }));
@@ -371,6 +444,7 @@
       rec.g.position.set(0,0,0);
       var world = local.clone().applyEuler(new THREE.Euler(0,0,rec.def.inc));
       rec.mesh.position.copy(world);
+      rec.mesh.rotation.y = tGlobal*0.0004*rec.def.spin;
       rec.halo.position.copy(world);
       if(rec.moons){
         rec.moons.forEach(function(m){
