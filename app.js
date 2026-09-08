@@ -64,6 +64,7 @@
   function lerp(a,b,t){ return a+(b-a)*t; }
   function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
   function easeOutCubic(t){ return 1-Math.pow(1-t,3); }
+  function easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
   function rand(a,b){ return a+Math.random()*(b-a); }
   function damp(cur, target, lambda, dt){ return lerp(cur, target, 1-Math.exp(-lambda*dt)); }
   function sumWeights(w){ var s=0; for(var i=0;i<w.length;i++) s+=w[i]; return s; }
@@ -220,19 +221,46 @@
       return spr;
     });
     var nebula = null;
-    if(idx===0){
-      var nebulaPos = center.clone().add(up.clone().multiplyScalar(-0.24*scaleAmt));
-      nebula = makeGlowSprite(glowWarm, 60, 0xffa3c4, 0);
+    var nebulaSpec = idx===0 ? {off:[0,-0.24], size:60, color:0xffa3c4}
+      : idx===3 ? {off:[0.14,0.72], size:52, color:0xc9b8ff}
+      : idx===5 ? {off:[0.64,-0.16], size:48, color:0xff9a7a}
+      : null;
+    if(nebulaSpec){
+      var nebulaPos = center.clone().add(right.clone().multiplyScalar(nebulaSpec.off[0]*scaleAmt)).add(up.clone().multiplyScalar(nebulaSpec.off[1]*scaleAmt));
+      nebula = makeGlowSprite(glowWarm, nebulaSpec.size, nebulaSpec.color, 0);
       nebula.position.copy(nebulaPos);
       group.add(nebula);
     }
     act1.add(group);
-    return { group:group, lineObj:lineObj, starSprites:starSprites, nebula:nebula, dir:dir, center:center };
+    return { group:group, lineObj:lineObj, starSprites:starSprites, nebula:nebula, dir:dir, center:center, right:right, up:up };
   });
+  var act1MilkyWay = (function(){
+    var n = 1400;
+    var pos = new Float32Array(n*3);
+    var axis = new THREE.Vector3(0.4,0.15,-0.3).normalize();
+    var ref = new THREE.Vector3(0,1,0);
+    var bandRight = new THREE.Vector3().crossVectors(ref, axis).normalize();
+    var bandUp = new THREE.Vector3().crossVectors(axis, bandRight).normalize();
+    for(var i=0;i<n;i++){
+      var along = rand(-1,1)*Math.PI;
+      var wobble = (Math.random()+Math.random()+Math.random()-1.5)*0.16;
+      var r = rand(560,760);
+      var dir3 = axis.clone().multiplyScalar(Math.cos(along)).add(bandRight.clone().multiplyScalar(Math.sin(along))).add(bandUp.clone().multiplyScalar(wobble)).normalize();
+      pos[i*3]=dir3.x*r; pos[i*3+1]=dir3.y*r; pos[i*3+2]=dir3.z*r;
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    var mat = new THREE.PointsMaterial({ color:0xd8d6ff, size:1.5, map:glowWhite, transparent:true, opacity:0.4, depthWrite:false, blending:THREE.AdditiveBlending, sizeAttenuation:true });
+    var pts = new THREE.Points(geo, mat);
+    act1.add(pts);
+    return pts;
+  })();
 
-  function sceneAct1(t){
+  function sceneAct1(t, tGlobal){
     var bl = beatLookup(BEAT1, WEIGHTS1, t);
     var idx = bl.idx, beatT = bl.beatT;
+    act1MilkyWay.rotation.y = tGlobal*0.00006;
+    act1MilkyWay.rotation.x = Math.sin(tGlobal*0.00004)*0.05;
     var drawT = clamp(beatT/1.5, 0, 1);
     act1Con.forEach(function(rec, i){
       var active = i===idx;
@@ -248,22 +276,45 @@
     });
     var cur = act1Con[idx];
     var pushAmt = lerp(0, 90, easeOutCubic(clamp(beatT/2.2,0,1)));
-    setCameraTarget(cur.dir.clone().multiplyScalar(pushAmt), cur.center);
+    var scanT = clamp((beatT-2.2)/6, 0, 1);
+    var scanX = Math.sin(beatT*0.32)*scanT*46;
+    var scanY = Math.cos(beatT*0.23)*scanT*30;
+    var lookTarget = cur.center.clone().add(cur.right.clone().multiplyScalar(scanX)).add(cur.up.clone().multiplyScalar(scanY));
+    setCameraTarget(cur.dir.clone().multiplyScalar(pushAmt), lookTarget);
     var c = CONSTELLATIONS[idx];
     return { eyebrow:'NIGHT SKY · '+(idx+1)+'/'+CONSTELLATIONS.length, title:c.name, fact:c.myth, meta:c.meta, accent:'var(--nova)', beatKey:'c'+idx };
   }
 
   // ================= ACT 2 : SOLAR SYSTEM =================
   var PLANETS = [
-    { name:'Mercury', color:0xb7ada0, r:60, size:3.4, speed:4.15, inc:0.12, fact:'The smallest planet swings around the Sun in just 88 days, baking at 430°C by day and freezing at -180°C by night.', meta:[['DIAMETER','4,879 km'],['DISTANCE','0.39 AU']] },
-    { name:'Venus', color:0xe8c07d, r:84, size:5.4, speed:1.62, inc:-0.06, fact:'Wrapped in thick clouds of sulfuric acid, Venus is the hottest planet — its runaway greenhouse effect traps heat at 465°C.', meta:[['DIAMETER','12,104 km'],['DISTANCE','0.72 AU']] },
-    { name:'Earth', color:0x5fb0e6, r:108, size:5.7, speed:1.0, inc:0, fact:'The only known world with liquid water on its surface, plate tectonics, and life — home.', meta:[['DIAMETER','12,742 km'],['DISTANCE','1.00 AU']] },
-    { name:'Mars', color:0xc1603f, r:134, size:4.2, speed:0.53, inc:0.09, fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
-    { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
-    { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, fact:'Famous for its dazzling rings of ice and rock, Saturn is so light it would float in a bathtub large enough to hold it.', meta:[['DIAMETER','116,460 km'],['MOONS','146 known']] },
-    { name:'Uranus', color:0x9fdce0, r:266, size:9.0, speed:0.012, inc:-0.1, fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
-    { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
+    { name:'Mercury', color:0xb7ada0, r:60, size:3.4, speed:4.15, inc:0.12, cam:'flyby', fact:'The smallest planet swings around the Sun in just 88 days, baking at 430°C by day and freezing at -180°C by night.', meta:[['DIAMETER','4,879 km'],['DISTANCE','0.39 AU']] },
+    { name:'Venus', color:0xe8c07d, r:84, size:5.4, speed:1.62, inc:-0.06, cam:'flyby', fact:'Wrapped in thick clouds of sulfuric acid, Venus is the hottest planet — its runaway greenhouse effect traps heat at 465°C.', meta:[['DIAMETER','12,104 km'],['DISTANCE','0.72 AU']] },
+    { name:'Earth', color:0x5fb0e6, r:108, size:5.7, speed:1.0, inc:0, cam:'distant', fact:'The only known world with liquid water on its surface, plate tectonics, and life — home.', meta:[['DIAMETER','12,742 km'],['DISTANCE','1.00 AU']] },
+    { name:'Mars', color:0xc1603f, r:134, size:4.2, speed:0.53, inc:0.09, cam:'flyby', fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
+    { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, cam:'orbit', fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
+    { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, cam:'orbit', fact:'Famous for its dazzling rings of ice and rock, Saturn is so light it would float in a bathtub large enough to hold it.', meta:[['DIAMETER','116,460 km'],['MOONS','146 known']] },
+    { name:'Uranus', color:0x9fdce0, r:266, size:9.0, speed:0.012, inc:-0.1, cam:'distant', fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
+    { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, cam:'distant', fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
   ];
+  function planetCamera(p, featuredPos, beatT){
+    var outward = featuredPos.clone().normalize();
+    var tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), outward).normalize();
+    var base = p.size*6+26;
+    if(p.cam==='orbit'){
+      var ang = beatT*0.3;
+      var dist = base*0.88;
+      var wave = p.name==='Saturn' ? Math.sin(beatT*0.55)*p.size*1.6 : 0;
+      var off = tangent.clone().multiplyScalar(Math.cos(ang)*dist).add(outward.clone().multiplyScalar(Math.sin(ang)*dist*0.55));
+      return { pos: featuredPos.clone().add(off).add(new THREE.Vector3(0, p.size*2+9+wave, 0)), look: featuredPos };
+    } else if(p.cam==='flyby'){
+      var dist2 = base*0.78;
+      var off2 = tangent.clone().multiplyScalar(dist2).add(outward.clone().multiplyScalar(dist2*0.15));
+      return { pos: featuredPos.clone().add(off2).add(new THREE.Vector3(0, p.size*1.1+5, 0)), look: featuredPos };
+    }
+    var dist3 = base*1.2;
+    var off3 = tangent.clone().multiplyScalar(dist3*0.85).add(outward.clone().multiplyScalar(dist3*0.4));
+    return { pos: featuredPos.clone().add(off3).add(new THREE.Vector3(0, p.size*3+13, 0)), look: featuredPos };
+  }
   var BEAT2 = reduced ? 4.8 : 4.2;
   var WEIGHTS2 = [0.75, 0.85, 1, 0.85, 1.6, 1.6, 0.8, 0.8];
   var SCENE2_DUR = sumWeights(WEIGHTS2)*BEAT2;
@@ -303,8 +354,8 @@
   });
 
   function sceneAct2(t, tGlobal){
-    var featured = beatLookup(BEAT2, WEIGHTS2, t).idx;
-    act2Grid.update(wellDip(0,0,900,26), 0);
+    var bl2 = beatLookup(BEAT2, WEIGHTS2, t);
+    var featured = bl2.idx, beatT2 = bl2.beatT;
     sunMesh.rotation.y += 0.0015;
     var featuredPos = null;
     act2Planets.forEach(function(rec){
@@ -328,14 +379,13 @@
     });
     var p = PLANETS[featured];
     if(featuredPos){
-      var outward = featuredPos.clone().normalize();
-      var tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), outward).normalize();
-      var dist = p.size*6+26;
-      var camTarget = featuredPos.clone()
-        .add(tangent.multiplyScalar(dist*0.9))
-        .add(outward.clone().multiplyScalar(dist*0.25))
-        .add(new THREE.Vector3(0, p.size*2.4+10, 0));
-      setCameraTarget(camTarget, featuredPos);
+      act2Grid.update(function(x,z,t2){
+        return wellDip(0,0,900,26)(x,z,t2) + wellDip(featuredPos.x,featuredPos.z,p.size*22,14)(x,z,t2);
+      }, 0);
+      var cam = planetCamera(p, featuredPos, beatT2);
+      setCameraTarget(cam.pos, cam.look);
+    } else {
+      act2Grid.update(wellDip(0,0,900,26), 0);
     }
     return { eyebrow:'SOLAR SYSTEM · '+(featured+1)+'/'+PLANETS.length, title:p.name, fact:p.fact, meta:p.meta, accent:'var(--nova)', beatKey:'p'+featured };
   }
@@ -422,17 +472,33 @@
         act3WebMarkers.push({ spr:marker, phase:mk*1.3 });
       }
     }
+    g.traverse(function(o){ if(o.material){ o.userData.baseOpacity = (o.material.opacity!==undefined?o.material.opacity:1); o.material.transparent = true; } });
     return g;
   });
+  function setStageFade(g, opacity, scaleAmt){
+    g.visible = opacity > 0.01;
+    g.scale.setScalar(scaleAmt);
+    g.traverse(function(o){ if(o.material){ o.material.opacity = o.userData.baseOpacity*opacity; } });
+  }
 
   function sceneAct3(t, tGlobal){
     var bl = beatLookup(BEAT3, WEIGHTS3, t);
-    var idx = bl.idx, beatT = bl.beatT;
-    act3Stages.forEach(function(g,i){ g.visible = i===idx; });
+    var idx = bl.idx, beatT = bl.beatT, beatDur = bl.beatDur;
     var sc = SCALES[idx];
-    var dip = lerp(340, 6, sc.grid);
+    var hasNext = idx < SCALES.length-1;
+    var TRANS = 1.3;
+    var transK = hasNext ? clamp(1-(beatDur-beatT)/TRANS, 0, 1) : 0;
+    act3Stages.forEach(function(g,i){
+      if(i===idx) setStageFade(g, 1-transK, lerp(1,1.55,transK));
+      else if(hasNext && i===idx+1) setStageFade(g, transK, lerp(0.35,1,transK));
+      else setStageFade(g, 0, 1);
+    });
+    var localFrac = beatT/beatDur;
+    var gridNow = lerp(sc.grid, SCALES[hasNext?idx+1:idx].grid, localFrac);
+    var dip = lerp(340, 6, gridNow);
     act3Grid.update(wellDip(0,0,dip,22), tGlobal*0.001);
-    var dist = lerp(220, 480, idx/(SCALES.length-1));
+    var actProgress = clamp(t/1000/SCENE3_DUR, 0, 1);
+    var dist = lerp(220, 480, easeInOutCubic(actProgress));
     var wob = Math.sin(tGlobal*0.0004)*8;
     if(idx===5){
       act3WebMarkers.forEach(function(m){
@@ -564,23 +630,39 @@
       lensUniforms.lensStrength.value = (0.16 + closeK*0.62) * appear;
     } else if(idx===1){
       trapPlanets.forEach(function(p,i){ var ang=tGlobal*0.0006*p.speed+i; p.mesh.position.set(Math.cos(ang)*p.r*appear, 0, Math.sin(ang)*p.r*appear); });
-      setCameraTarget(new THREE.Vector3(0,70,150), new THREE.Vector3(0,0,0));
+      var revealK1 = easeOutCubic(clamp(beatT/1.6,0,1));
+      var orbitAngle1 = beatT*0.16;
+      var dist1 = lerp(230, 128, revealK1);
+      var height1 = lerp(140, 62, revealK1);
+      setCameraTarget(new THREE.Vector3(Math.sin(orbitAngle1)*dist1, height1, Math.cos(orbitAngle1)*dist1), new THREE.Vector3(0,0,0));
     } else if(idx===2){
       var orbAng = tGlobal*0.004;
       var sep = Math.max(2, 26-beatT*3.2);
       ligoA.position.set(Math.cos(orbAng)*sep,0,Math.sin(orbAng)*sep);
       ligoB.position.set(-Math.cos(orbAng)*sep,0,-Math.sin(orbAng)*sep);
       ligoGrid.update(rippleDip(16*appear), tGlobal*0.001);
-      setCameraTarget(new THREE.Vector3(0,90,170), new THREE.Vector3(0,0,0));
+      var mergeK = clamp(1-sep/26, 0, 1);
+      var dist2 = lerp(190, 95, mergeK);
+      var height2 = lerp(110, 55, mergeK);
+      var angle2 = beatT*0.09;
+      setCameraTarget(new THREE.Vector3(Math.sin(angle2)*dist2, height2, Math.cos(angle2)*dist2), new THREE.Vector3(0,0,0));
     } else if(idx===3){
       jwstGroup.rotation.y = tGlobal*0.0004;
       hexMeshes.forEach(function(m,i){ var a2=clamp(appear*7-i,0,1); m.scale.setScalar(a2); });
-      setCameraTarget(new THREE.Vector3(0,20,110), new THREE.Vector3(0,0,0));
+      var revealK3 = easeOutCubic(clamp(beatT/1.8,0,1));
+      var orbitAngle3 = beatT*0.14;
+      var dist3b = lerp(180, 78, revealK3);
+      var height3 = lerp(70, 22, revealK3) + Math.sin(beatT*0.5)*6;
+      setCameraTarget(new THREE.Vector3(Math.sin(orbitAngle3)*dist3b, height3, Math.cos(orbitAngle3)*dist3b), new THREE.Vector3(0,0,0));
     } else if(idx===4){
       tryFetchAPOD();
       apodPlane.material.opacity = 0.95*appear;
       apodSparks.material.opacity = 0.75*appear;
-      setCameraTarget(new THREE.Vector3(0,10,180), new THREE.Vector3(0,0,0));
+      apodSparks.rotation.y = tGlobal*0.00012;
+      var revealK4 = easeOutCubic(clamp(beatT/1.6,0,1));
+      var dist4 = lerp(240, 140, revealK4);
+      var drift4 = Math.sin(beatT*0.2)*22;
+      setCameraTarget(new THREE.Vector3(drift4, lerp(60,18,revealK4), dist4), new THREE.Vector3(0,0,0));
     }
     var live = idx===4 && apodState.ok;
     document.getElementById('liveBadge').classList.toggle('show', !!live);
