@@ -217,6 +217,7 @@
     }
     return { mesh:mesh, update:update };
   }
+  function flatDip(){ return function(){ return 0; }; }
   function wellDip(mx,mz,mass,soften){ return function(x,z){ var d=Math.sqrt((x-mx)*(x-mx)+(z-mz)*(z-mz)); return -mass/(d+soften); }; }
   function rippleDip(mass){ return function(x,z,t){ var d=Math.sqrt(x*x+z*z); return Math.sin(d*0.22 - t*3.5)*mass*Math.exp(-d*0.0045); }; }
 
@@ -331,11 +332,11 @@
   function sceneAct1(t, tGlobal){
     var bl = beatLookup(BEAT1, WEIGHTS1, t);
     var idx = bl.idx, beatT = bl.beatT;
+    var drawT = clamp(beatT/1.5, 0, 1);
     var seasonHex = SEASON_TINT[CONSTELLATIONS[idx].meta[1][1]] || 0x03040a;
     clearColorTarget.setHex(seasonHex);
     act1MilkyWay.rotation.y = tGlobal*0.00006;
     act1MilkyWay.rotation.x = Math.sin(tGlobal*0.00004)*0.05;
-    var drawT = clamp(beatT/1.5, 0, 1);
     act1Con.forEach(function(rec, i){
       var active = i===idx;
       rec.lineObj.material.opacity = damp(rec.lineObj.material.opacity, active?easeOutCubic(drawT)*0.9:0.05, 3, 0.016);
@@ -495,7 +496,7 @@
     { label:'Local Group', num:'10', unit:'MILLION LIGHT-YEARS WIDE', title:'A Cluster of Galaxies', grid:0.92,
       fact:'The Milky Way is one of 80+ galaxies in the Local Group — and it\'s on a slow collision course with Andromeda.', meta:[['MEMBER GALAXIES','80+'],['ANDROMEDA ETA','~4.5 billion yrs']] },
     { label:'Observable Universe', num:'93', unit:'BILLION LIGHT-YEARS WIDE', title:'The Edge of the Knowable', grid:1.0,
-      fact:'Beyond roughly 93 billion light-years, light simply hasn\'t had time to reach us — the true universe may be far larger, or infinite.', meta:[['GALAXIES','~2 trillion'],['AGE OF LIGHT','13.8 billion yrs']] }
+      fact:'Beyond roughly 93 billion light-years, light simply hasn\'t had time to reach us. On the largest scales, spacetime itself is measured to be flat.', meta:[['GALAXIES','~2 trillion'],['CURVATURE','~0 (flat)']] }
   ];
   var BEAT3 = reduced ? 5.6 : 4.9;
   var WEIGHTS3 = [0.85, 0.9, 0.9, 1.3, 1, 1.8];
@@ -510,7 +511,7 @@
   var act3WebMarkers = [];
   var act3Stages = SCALES.map(function(sc, idx){
     var g = new THREE.Group(); g.visible=false; act3.add(g);
-    if(idx===0){
+    if(sc.draw==='earth' || idx===0){
       var m = new THREE.Mesh(new THREE.SphereGeometry(20,32,32), new THREE.MeshStandardMaterial({color:0x5fb0e6, roughness:0.7}));
       g.add(m); g.add(makeGlowSprite(glowCyan,70,0x8ff5f7,0.4));
     } else if(idx===1){
@@ -594,7 +595,7 @@
     var dist = lerp(220, 480, easeInOutCubic(actProgress));
     var wob = Math.sin(tGlobal*0.0004)*8;
     if(idx===5){
-      act3WebMarkers.forEach(function(m){
+      act3WebMarkers.forEach(function(m,i){
         m.spr.material.opacity = 0.35 + Math.sin(tGlobal*0.0012 + m.phase)*0.3;
       });
       var driftAng = beatT*0.12;
