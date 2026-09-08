@@ -8,8 +8,11 @@
   var fctx = fx.getContext('2d');
   var renderer = new THREE.WebGLRenderer({ canvas:glCanvas, antialias:true, powerPreference:'high-performance' });
   renderer.setClearColor(0x03040a, 1);
+  var clearColorCurrent = new THREE.Color(0x03040a);
+  var clearColorTarget = new THREE.Color(0x03040a);
   var scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x03040a, 0.00075);
+  var SEASON_TINT = { Winter:0x1c3350, Spring:0x123324, Summer:0x3a2214, Autumn:0x2e1c33 };
   var camera = new THREE.PerspectiveCamera(50, 1, 0.1, 4000);
   var W=0,H=0;
 
@@ -259,6 +262,8 @@
   function sceneAct1(t, tGlobal){
     var bl = beatLookup(BEAT1, WEIGHTS1, t);
     var idx = bl.idx, beatT = bl.beatT;
+    var seasonHex = SEASON_TINT[CONSTELLATIONS[idx].meta[1][1]] || 0x03040a;
+    clearColorTarget.setHex(seasonHex);
     act1MilkyWay.rotation.y = tGlobal*0.00006;
     act1MilkyWay.rotation.x = Math.sin(tGlobal*0.00004)*0.05;
     var drawT = clamp(beatT/1.5, 0, 1);
@@ -302,18 +307,18 @@
     var base = p.size*6+26;
     if(p.cam==='orbit'){
       var ang = beatT*0.3;
-      var dist = base*0.88;
+      var dist = base*0.7;
       var wave = p.name==='Saturn' ? Math.sin(beatT*0.55)*p.size*1.6 : 0;
       var off = tangent.clone().multiplyScalar(Math.cos(ang)*dist).add(outward.clone().multiplyScalar(Math.sin(ang)*dist*0.55));
-      return { pos: featuredPos.clone().add(off).add(new THREE.Vector3(0, p.size*2+9+wave, 0)), look: featuredPos };
+      return { pos: featuredPos.clone().add(off).add(new THREE.Vector3(0, p.size*1.6+6+wave, 0)), look: featuredPos };
     } else if(p.cam==='flyby'){
-      var dist2 = base*0.78;
+      var dist2 = base*0.6;
       var off2 = tangent.clone().multiplyScalar(dist2).add(outward.clone().multiplyScalar(dist2*0.15));
-      return { pos: featuredPos.clone().add(off2).add(new THREE.Vector3(0, p.size*1.1+5, 0)), look: featuredPos };
+      return { pos: featuredPos.clone().add(off2).add(new THREE.Vector3(0, p.size*0.9+4, 0)), look: featuredPos };
     }
-    var dist3 = base*1.2;
+    var dist3 = base*0.98;
     var off3 = tangent.clone().multiplyScalar(dist3*0.85).add(outward.clone().multiplyScalar(dist3*0.4));
-    return { pos: featuredPos.clone().add(off3).add(new THREE.Vector3(0, p.size*3+13, 0)), look: featuredPos };
+    return { pos: featuredPos.clone().add(off3).add(new THREE.Vector3(0, p.size*2.4+11, 0)), look: featuredPos };
   }
   var BEAT2 = reduced ? 4.8 : 4.2;
   var WEIGHTS2 = [0.75, 0.85, 1, 0.85, 1.6, 1.6, 0.8, 0.8];
@@ -356,6 +361,7 @@
   function sceneAct2(t, tGlobal){
     var bl2 = beatLookup(BEAT2, WEIGHTS2, t);
     var featured = bl2.idx, beatT2 = bl2.beatT;
+    clearColorTarget.setHex(0x03040a);
     sunMesh.rotation.y += 0.0015;
     var featuredPos = null;
     act2Planets.forEach(function(rec){
@@ -482,6 +488,7 @@
   }
 
   function sceneAct3(t, tGlobal){
+    clearColorTarget.setHex(0x03040a);
     var bl = beatLookup(BEAT3, WEIGHTS3, t);
     var idx = bl.idx, beatT = bl.beatT, beatDur = bl.beatDur;
     var sc = SCALES[idx];
@@ -611,6 +618,7 @@
   }
 
   function sceneAct4(t, tGlobal){
+    clearColorTarget.setHex(0x03040a);
     var bl4 = beatLookup(BEAT4, WEIGHTS4, t);
     var idx = bl4.idx, beatT = bl4.beatT, beatDur = bl4.beatDur;
     var appear = easeOutCubic(clamp(beatT/1.2,0,1));
@@ -632,8 +640,8 @@
       trapPlanets.forEach(function(p,i){ var ang=tGlobal*0.0006*p.speed+i; p.mesh.position.set(Math.cos(ang)*p.r*appear, 0, Math.sin(ang)*p.r*appear); });
       var revealK1 = easeOutCubic(clamp(beatT/1.6,0,1));
       var orbitAngle1 = beatT*0.16;
-      var dist1 = lerp(230, 128, revealK1);
-      var height1 = lerp(140, 62, revealK1);
+      var dist1 = lerp(190, 96, revealK1);
+      var height1 = lerp(112, 44, revealK1);
       setCameraTarget(new THREE.Vector3(Math.sin(orbitAngle1)*dist1, height1, Math.cos(orbitAngle1)*dist1), new THREE.Vector3(0,0,0));
     } else if(idx===2){
       var orbAng = tGlobal*0.004;
@@ -651,8 +659,8 @@
       hexMeshes.forEach(function(m,i){ var a2=clamp(appear*7-i,0,1); m.scale.setScalar(a2); });
       var revealK3 = easeOutCubic(clamp(beatT/1.8,0,1));
       var orbitAngle3 = beatT*0.14;
-      var dist3b = lerp(180, 78, revealK3);
-      var height3 = lerp(70, 22, revealK3) + Math.sin(beatT*0.5)*6;
+      var dist3b = lerp(150, 58, revealK3);
+      var height3 = lerp(58, 16, revealK3) + Math.sin(beatT*0.5)*6;
       setCameraTarget(new THREE.Vector3(Math.sin(orbitAngle3)*dist3b, height3, Math.cos(orbitAngle3)*dist3b), new THREE.Vector3(0,0,0));
     } else if(idx===4){
       tryFetchAPOD();
@@ -768,6 +776,8 @@
     _lensProj.set(0,0,0).project(camera);
     lensUniforms.lensCenter.value.set(_lensProj.x*0.5+0.5, _lensProj.y*0.5+0.5);
     drawWarp(now);
+    clearColorCurrent.lerp(clearColorTarget, 0.025);
+    renderer.setClearColor(clearColorCurrent, 1);
     renderer.setRenderTarget(lensRT);
     renderer.render(scene, camera);
     renderer.setRenderTarget(null);
