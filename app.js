@@ -1,0 +1,579 @@
+(function(){
+  "use strict";
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------------- renderer / scene / camera ----------------
+  var glCanvas = document.getElementById('gl');
+  var fx = document.getElementById('fx');
+  var fctx = fx.getContext('2d');
+  var renderer = new THREE.WebGLRenderer({ canvas:glCanvas, antialias:true, powerPreference:'high-performance' });
+  renderer.setClearColor(0x03040a, 1);
+  var scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x03040a, 0.00075);
+  var camera = new THREE.PerspectiveCamera(50, 1, 0.1, 4000);
+  var W=0,H=0;
+  function resize(){
+    W = window.innerWidth; H = window.innerHeight;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    renderer.setSize(W,H);
+    fx.width = W*Math.min(window.devicePixelRatio||1,2); fx.height = H*Math.min(window.devicePixelRatio||1,2);
+    fx.style.width=W+'px'; fx.style.height=H+'px';
+    fctx.setTransform(Math.min(window.devicePixelRatio||1,2),0,0,Math.min(window.devicePixelRatio||1,2),0,0);
+    camera.aspect = W/H; camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+
+  var ambient = new THREE.AmbientLight(0x33344a, 0.9);
+  scene.add(ambient);
+  var sunLight = new THREE.PointLight(0xfff2d8, 2.6, 0, 0.6);
+  scene.add(sunLight);
+
+  // ---------------- utils ----------------
+  function lerp(a,b,t){ return a+(b-a)*t; }
+  function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+  function easeOutCubic(t){ return 1-Math.pow(1-t,3); }
+  function rand(a,b){ return a+Math.random()*(b-a); }
+  function damp(cur, target, lambda, dt){ return lerp(cur, target, 1-Math.exp(-lambda*dt)); }
+
+  function makeGlowTexture(hex){
+    var c = document.createElement('canvas'); c.width=128; c.height=128;
+    var g = c.getContext('2d');
+    var grad = g.createRadialGradient(64,64,0,64,64,64);
+    var col = new THREE.Color(hex);
+    var r=Math.round(col.r*255), gg=Math.round(col.g*255), b=Math.round(col.b*255);
+    grad.addColorStop(0,'rgba('+r+','+gg+','+b+',1)');
+    grad.addColorStop(0.4,'rgba('+r+','+gg+','+b+',0.55)');
+    grad.addColorStop(1,'rgba('+r+','+gg+','+b+',0)');
+    g.fillStyle=grad; g.fillRect(0,0,128,128);
+    var tex = new THREE.CanvasTexture(c);
+    return tex;
+  }
+  var glowWarm = makeGlowTexture(0xffd9a0);
+  var glowCyan = makeGlowTexture(0x8ff5f7);
+  var glowWhite = makeGlowTexture(0xffffff);
+
+  function makeGlowSprite(tex, size, color, opacity){
+    var mat = new THREE.SpriteMaterial({ map:tex, color:color!==undefined?color:0xffffff, transparent:true, opacity:opacity!==undefined?opacity:1, depthWrite:false, blending:THREE.AdditiveBlending });
+    var s = new THREE.Sprite(mat);
+    s.scale.set(size,size,1);
+    return s;
+  }
+
+  function makeStarField(count, rMin, rMax, colorHex, size){
+    var pos = new Float32Array(count*3);
+    for(var i=0;i<count;i++){
+      var r = rand(rMin,rMax);
+      var th = Math.random()*Math.PI*2;
+      var ph = Math.acos(rand(-1,1));
+      pos[i*3] = r*Math.sin(ph)*Math.cos(th);
+      pos[i*3+1] = r*Math.cos(ph)*0.6;
+      pos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    var mat = new THREE.PointsMaterial({ color:colorHex, size:size, map:glowWhite, transparent:true, opacity:0.85, depthWrite:false, blending:THREE.AdditiveBlending, sizeAttenuation:true });
+    return new THREE.Points(geo, mat);
+  }
+
+  // shared holographic grid (used by solar system floor, black hole well, LIGO ripple, scale transitions)
+  function buildGrid(cols, rows, spacing, colorHex, opacity){
+    var segs = [];
+    for(var j=0;j<=rows;j++){ for(var i=0;i<cols;i++){ segs.push([i,j,i+1,j]); } }
+    for(var i2=0;i2<=cols;i2++){ for(var j2=0;j2<rows;j2++){ segs.push([i2,j2,i2,j2+1]); } }
+    var positions = new Float32Array(segs.length*2*3);
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+    var mat = new THREE.LineBasicMaterial({ color:colorHex, transparent:true, opacity:opacity, blending:THREE.AdditiveBlending, depthWrite:false });
+    var mesh = new THREE.LineSegments(geo, mat);
+    function update(dipFn, t){
+      var arr = geo.attributes.position.array;
+      var k=0;
+      for(var s=0;s<segs.length;s++){
+        var seg = segs[s];
+        for(var e=0;e<2;e++){
+          var gi = seg[e*2], gj = seg[e*2+1];
+          var x = (gi-cols/2)*spacing, z=(gj-rows/2)*spacing;
+          var y = dipFn(x,z,t);
+          arr[k++]=x; arr[k++]=y; arr[k++]=z;
+        }
+      }
+      geo.attributes.position.needsUpdate = true;
+    }
+    return { mesh:mesh, update:update };
+  }
+  function wellDip(mx,mz,mass,soften){ return function(x,z){ var d=Math.sqrt((x-mx)*(x-mx)+(z-mz)*(z-mz)); return -mass/(d+soften); }; }
+
+  function ellipseLoop(rx, rz, colorHex, opacity, segments){
+    segments = segments||96;
+    var pts=[];
+    for(var i=0;i<=segments;i++){ var a=i/segments*Math.PI*2; pts.push(new THREE.Vector3(Math.cos(a)*rx,0,Math.sin(a)*rz)); }
+    var geo = new THREE.BufferGeometry().setFromPoints(pts);
+    var mat = new THREE.LineBasicMaterial({ color:colorHex, transparent:true, opacity:opacity, blending:THREE.AdditiveBlending, depthWrite:false });
+    return new THREE.LineLoop(geo, mat);
+  }
+
+  // ---------------- camera director ----------------
+  var camPos = new THREE.Vector3(0,40,260);
+  var camLook = new THREE.Vector3(0,0,0);
+  var targetPos = camPos.clone();
+  var targetLook = camLook.clone();
+  camera.position.copy(camPos);
+  function setCameraTarget(pos, look){ targetPos.copy(pos); targetLook.copy(look); }
+  function updateCamera(dt){
+    var lam = reduced ? 6 : 1.6;
+    camPos.x = damp(camPos.x, targetPos.x, lam, dt); camPos.y = damp(camPos.y, targetPos.y, lam, dt); camPos.z = damp(camPos.z, targetPos.z, lam, dt);
+    camLook.x = damp(camLook.x, targetLook.x, lam*1.1, dt); camLook.y = damp(camLook.y, targetLook.y, lam*1.1, dt); camLook.z = damp(camLook.z, targetLook.z, lam*1.1, dt);
+    camera.position.copy(camPos);
+    camera.lookAt(camLook);
+  }
+
+  // ================= ACT 1 : NIGHT SKY =================
+  var CONSTELLATIONS = [
+    { name:'Orion', myth:'The Hunter — anchored by red supergiant Betelgeuse and blue-giant Rigel, Orion is visible from nearly everywhere on Earth.', meta:[['BRIGHTEST','Rigel · 860 ly'],['SEASON','Winter']],
+      pts:[[-0.40,0.60],[0.35,0.55],[-0.12,0.05],[0,0],[0.12,-0.05],[-0.35,-0.60],[0.30,-0.65]], lines:[[0,2],[1,4],[2,3],[3,4],[2,5],[4,6]] },
+    { name:'Ursa Major', myth:'Home to the Big Dipper — the two outer bowl stars, Dubhe and Merak, point straight to Polaris, the North Star.', meta:[['BRIGHTEST','Alioth · 83 ly'],['SEASON','Spring']],
+      pts:[[-0.55,0.45],[-0.55,0.05],[-0.22,-0.05],[-0.12,0.30],[0.18,0.35],[0.45,0.40],[0.68,0.55]], lines:[[0,1],[1,2],[2,3],[3,0],[3,4],[4,5],[5,6]] },
+    { name:'Cassiopeia', myth:'The vain queen of Greek myth, forever circling the celestial pole on her throne, traced by a glowing W.', meta:[['BRIGHTEST','Schedar · 228 ly'],['SEASON','Autumn']],
+      pts:[[-0.60,0.0],[-0.30,0.40],[0,0.05],[0.30,0.40],[0.60,0.0]], lines:[[0,1],[1,2],[2,3],[3,4]] },
+    { name:'Cygnus', myth:'The Swan glides along the Milky Way; its tail star Deneb, one of the most luminous known, sits roughly 2,600 light-years away.', meta:[['BRIGHTEST','Deneb · 2,600 ly'],['SEASON','Summer']],
+      pts:[[0,0.62],[0,-0.62],[-0.45,0.10],[0.45,-0.10],[0,0]], lines:[[0,4],[4,1],[2,4],[4,3]] },
+    { name:'Leo', myth:'A backwards question mark traces the lion\'s mane; its heart, Regulus, is a blue star spinning so fast it bulges at the equator.', meta:[['BRIGHTEST','Regulus · 79 ly'],['SEASON','Spring']],
+      pts:[[-0.50,-0.30],[-0.58,0.10],[-0.38,0.42],[-0.10,0.46],[0.06,0.30],[0.25,0.15],[0.55,-0.15]], lines:[[0,1],[1,2],[2,3],[3,4],[4,0],[0,5],[5,6]] },
+    { name:'Scorpius', myth:'A curling tail guarded by Antares, a red supergiant so vast it could swallow the orbit of Mars.', meta:[['BRIGHTEST','Antares · 550 ly'],['SEASON','Summer']],
+      pts:[[-0.55,0.50],[-0.38,0.30],[-0.26,0.05],[-0.10,-0.15],[0.10,-0.35],[0.35,-0.45],[0.55,-0.28],[0.60,-0.02]], lines:[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7]], special:2 }
+  ];
+  var BEAT1 = reduced ? 5.6 : 4.8;
+  var SCENE1_DUR = CONSTELLATIONS.length*BEAT1;
+  var DOME_R = 520;
+
+  var act1 = new THREE.Group(); scene.add(act1);
+  var act1BgStars = makeStarField(2600, 480, 900, 0xf4f0e6, 2.4);
+  act1.add(act1BgStars);
+  var act1Con = CONSTELLATIONS.map(function(c, idx){
+    var az = idx*(Math.PI*2/CONSTELLATIONS.length);
+    var el = Math.sin(idx*1.7)*0.35;
+    var dir = new THREE.Vector3(Math.sin(az)*Math.cos(el), Math.sin(el), Math.cos(az)*Math.cos(el));
+    var right = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), dir).normalize();
+    var up = new THREE.Vector3().crossVectors(dir, right).normalize();
+    var center = dir.clone().multiplyScalar(DOME_R);
+    var scaleAmt = 130;
+    var world = c.pts.map(function(p){ return center.clone().add(right.clone().multiplyScalar(p[0]*scaleAmt)).add(up.clone().multiplyScalar(p[1]*scaleAmt)); });
+
+    var group = new THREE.Group();
+    var lineSegs = [];
+    c.lines.forEach(function(seg){ lineSegs.push(world[seg[0]], world[seg[1]]); });
+    var lineGeo = new THREE.BufferGeometry().setFromPoints(lineSegs);
+    var lineMat = new THREE.LineBasicMaterial({ color:0xffb454, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false });
+    var lineObj = new THREE.LineSegments(lineGeo, lineMat);
+    group.add(lineObj);
+
+    var starSprites = world.map(function(p,j){
+      var isSpecial = c.special===j;
+      var spr = makeGlowSprite(isSpecial?glowWarm:glowWhite, isSpecial?34:20, isSpecial?0xff8a7a:0xfdf8ee, 0);
+      spr.position.copy(p);
+      group.add(spr);
+      return spr;
+    });
+    act1.add(group);
+    return { group:group, lineObj:lineObj, starSprites:starSprites, dir:dir, center:center };
+  });
+
+  function sceneAct1(t){
+    var idx = clamp(Math.floor(t/1000/BEAT1), 0, CONSTELLATIONS.length-1);
+    var beatT = (t/1000) - idx*BEAT1;
+    var drawT = clamp(beatT/1.5, 0, 1);
+    act1Con.forEach(function(rec, i){
+      var active = i===idx;
+      rec.lineObj.material.opacity = damp(rec.lineObj.material.opacity, active?easeOutCubic(drawT)*0.9:0.05, 3, 0.016);
+      rec.starSprites.forEach(function(s,j){
+        var appear = active ? clamp(drawT*4-j*0.3,0,1) : 0.12;
+        s.material.opacity = damp(s.material.opacity, appear, 3, 0.016);
+      });
+    });
+    var cur = act1Con[idx];
+    var pushAmt = lerp(0, 90, easeOutCubic(clamp(beatT/2.2,0,1)));
+    setCameraTarget(cur.dir.clone().multiplyScalar(pushAmt), cur.center);
+    var c = CONSTELLATIONS[idx];
+    return { eyebrow:'NIGHT SKY · '+(idx+1)+'/'+CONSTELLATIONS.length, title:c.name, fact:c.myth, meta:c.meta, accent:'var(--nova)', beatKey:'c'+idx };
+  }
+
+  // ================= ACT 2 : SOLAR SYSTEM =================
+  var PLANETS = [
+    { name:'Mercury', color:0xb7ada0, r:60, size:3.4, speed:4.15, inc:0.12, fact:'The smallest planet swings around the Sun in just 88 days, baking at 430°C by day and freezing at -180°C by night.', meta:[['DIAMETER','4,879 km'],['DISTANCE','0.39 AU']] },
+    { name:'Venus', color:0xe8c07d, r:84, size:5.4, speed:1.62, inc:-0.06, fact:'Wrapped in thick clouds of sulfuric acid, Venus is the hottest planet — its runaway greenhouse effect traps heat at 465°C.', meta:[['DIAMETER','12,104 km'],['DISTANCE','0.72 AU']] },
+    { name:'Earth', color:0x5fb0e6, r:108, size:5.7, speed:1.0, inc:0, fact:'The only known world with liquid water on its surface, plate tectonics, and life — home.', meta:[['DIAMETER','12,742 km'],['DISTANCE','1.00 AU']] },
+    { name:'Mars', color:0xc1603f, r:134, size:4.2, speed:0.53, inc:0.09, fact:'The Red Planet hosts Olympus Mons, the largest volcano in the solar system — nearly three times the height of Everest.', meta:[['DIAMETER','6,779 km'],['DISTANCE','1.52 AU']] },
+    { name:'Jupiter', color:0xd8ab7e, r:176, size:15.5, speed:0.084, inc:-0.04, fact:'A gas giant so massive it could hold over 1,300 Earths; its Great Red Spot is a storm wider than our entire planet.', meta:[['DIAMETER','139,820 km'],['MOONS','95 known']] },
+    { name:'Saturn', color:0xe3cb95, r:222, size:13.2, speed:0.034, inc:0.07, ring:true, fact:'Famous for its dazzling rings of ice and rock, Saturn is so light it would float in a bathtub large enough to hold it.', meta:[['DIAMETER','116,460 km'],['MOONS','146 known']] },
+    { name:'Uranus', color:0x9fdce0, r:266, size:9.0, speed:0.012, inc:-0.1, fact:'This ice giant spins almost on its side, likely knocked over by an ancient collision, giving it extreme seasons.', meta:[['DIAMETER','50,724 km'],['DISTANCE','19.2 AU']] },
+    { name:'Neptune', color:0x5f79e0, r:306, size:8.7, speed:0.006, inc:0.05, fact:'The windiest world known — supersonic storms race across Neptune at speeds up to 2,100 km/h.', meta:[['DIAMETER','49,244 km'],['DISTANCE','30.1 AU']] }
+  ];
+  var BEAT2 = reduced ? 4.8 : 4.2;
+  var SCENE2_DUR = PLANETS.length*BEAT2;
+
+  var act2 = new THREE.Group(); scene.add(act2); act2.visible=false;
+  var sunGeo = new THREE.SphereGeometry(15, 32, 32);
+  var sunMat = new THREE.MeshBasicMaterial({ color:0xffd88a });
+  var sunMesh = new THREE.Mesh(sunGeo, sunMat);
+  act2.add(sunMesh);
+  act2.add(makeGlowSprite(glowWarm, 220, 0xffcf8a, 0.9));
+  var act2Grid = buildGrid(40,40,20, 0x4be8ec, 0.16);
+  act2Grid.mesh.position.y = -70;
+  act2.add(act2Grid.mesh);
+  var act2Planets = PLANETS.map(function(p, i){
+    var g = new THREE.Group();
+    g.rotation.x = 0; g.rotation.z = p.inc;
+    var mesh = new THREE.Mesh(new THREE.SphereGeometry(p.size, 24, 24), new THREE.MeshStandardMaterial({ color:p.color, roughness:0.85, metalness:0.05 }));
+    g.add(mesh);
+    if(p.ring){
+      var ring = new THREE.Mesh(new THREE.RingGeometry(p.size*1.4, p.size*2.2, 48), new THREE.MeshBasicMaterial({ color:0xe3cb95, side:THREE.DoubleSide, transparent:true, opacity:0.75 }));
+      ring.rotation.x = Math.PI/2 - 0.35;
+      g.add(ring);
+    }
+    var haloSpr = makeGlowSprite(glowWhite, p.size*4.5, 0xffffff, 0);
+    g.add(haloSpr);
+    act2.add(g);
+    act2.add(ellipseLoop(p.r, p.r*0.96, 0x4be8ec, 0.10));
+    return { g:g, mesh:mesh, halo:haloSpr, def:p, index:i };
+  });
+
+  function sceneAct2(t, tGlobal){
+    var featured = clamp(Math.floor(t/1000/BEAT2), 0, PLANETS.length-1);
+    act2Grid.update(wellDip(0,0,900,26), 0);
+    sunMesh.rotation.y += 0.0015;
+    var featuredPos = null;
+    act2Planets.forEach(function(rec){
+      var ang = tGlobal*0.00035*rec.def.speed + rec.index*1.7;
+      var lx = Math.cos(ang)*rec.def.r, lz = Math.sin(ang)*rec.def.r*0.96;
+      var local = new THREE.Vector3(lx,0,lz);
+      rec.g.position.set(0,0,0);
+      var world = local.clone().applyEuler(new THREE.Euler(0,0,rec.def.inc));
+      rec.mesh.position.copy(world);
+      rec.halo.position.copy(world);
+      var isFeatured = rec.index===featured;
+      rec.halo.material.opacity = damp(rec.halo.material.opacity, isFeatured?0.7:0, 4, 0.016);
+      if(isFeatured) featuredPos = world;
+      sunLight.position.set(0,0,0);
+    });
+    var p = PLANETS[featured];
+    if(featuredPos){
+      var outward = featuredPos.clone().normalize();
+      var tangent = new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0), outward).normalize();
+      var dist = p.size*6+26;
+      var camTarget = featuredPos.clone()
+        .add(tangent.multiplyScalar(dist*0.9))
+        .add(outward.clone().multiplyScalar(dist*0.25))
+        .add(new THREE.Vector3(0, p.size*2.4+10, 0));
+      setCameraTarget(camTarget, featuredPos);
+    }
+    return { eyebrow:'SOLAR SYSTEM · '+(featured+1)+'/'+PLANETS.length, title:p.name, fact:p.fact, meta:p.meta, accent:'var(--nova)', beatKey:'p'+featured };
+  }
+
+  // ================= ACT 3 : SCALE OF THE UNIVERSE =================
+  var SCALES = [
+    { label:'Earth', num:'12,742', unit:'KM ACROSS', title:'A Pale Blue Marble', grid:0.15,
+      fact:'Our home world spans 12,742 kilometers — light circles it seven times in a single second.', meta:[['MASS','5.97 × 10²⁴ kg'],['AGE','4.5 billion yrs']] },
+    { label:'Solar System', num:'9.1', unit:'BILLION KM (NEPTUNE)', title:'The Sun\'s Domain', grid:0.5,
+      fact:'Shrink the Sun to a grapefruit and Earth becomes a grain of sand nine meters away — Neptune would sit half a kilometer out.', meta:[['DIAMETER','~9.1 billion km'],['LIGHT TIME','8.4 hours']] },
+    { label:'Nearby Stars', num:'4.25', unit:'LIGHT-YEARS TO PROXIMA', title:'The Neighborhood', grid:0.65,
+      fact:'Proxima Centauri, the nearest star beyond the Sun, is 4.25 light-years away — a signal sent today would arrive in 2030.', meta:[['NEAREST STAR','Proxima Cen'],['TRAVEL TIME','~73,000 yrs by probe']] },
+    { label:'Milky Way', num:'100,000', unit:'LIGHT-YEARS ACROSS', title:'Our Galaxy', grid:0.8,
+      fact:'Some 100–400 billion stars spiral through the Milky Way — our Sun takes 230 million years to complete one orbit.', meta:[['STARS','100–400 billion'],['SUN\'S ORBIT','230 million yrs']] },
+    { label:'Local Group', num:'10', unit:'MILLION LIGHT-YEARS WIDE', title:'A Cluster of Galaxies', grid:0.92,
+      fact:'The Milky Way is one of 80+ galaxies in the Local Group — and it\'s on a slow collision course with Andromeda.', meta:[['MEMBER GALAXIES','80+'],['ANDROMEDA ETA','~4.5 billion yrs']] },
+    { label:'Observable Universe', num:'93', unit:'BILLION LIGHT-YEARS WIDE', title:'The Edge of the Knowable', grid:1.0,
+      fact:'Beyond roughly 93 billion light-years, light simply hasn\'t had time to reach us — the true universe may be far larger, or infinite.', meta:[['GALAXIES','~2 trillion'],['AGE OF LIGHT','13.8 billion yrs']] }
+  ];
+  var BEAT3 = reduced ? 5.6 : 4.9;
+  var SCENE3_DUR = SCALES.length*BEAT3;
+
+  var act3 = new THREE.Group(); scene.add(act3); act3.visible=false;
+  var act3Grid = buildGrid(46,46,18, 0x4be8ec, 0.22);
+  act3Grid.mesh.position.y = -60;
+  act3.add(act3Grid.mesh);
+  var act3Bg = makeStarField(1800, 300, 1400, 0xd8d6ff, 2.0);
+  act3.add(act3Bg);
+  var act3Stages = SCALES.map(function(sc, idx){
+    var g = new THREE.Group(); g.visible=false; act3.add(g);
+    if(idx===0){
+      var m = new THREE.Mesh(new THREE.SphereGeometry(20,32,32), new THREE.MeshStandardMaterial({color:0x5fb0e6, roughness:0.7}));
+      g.add(m); g.add(makeGlowSprite(glowCyan,70,0x8ff5f7,0.4));
+    } else if(idx===1){
+      for(var i=0;i<5;i++){ g.add(ellipseLoop(30+i*22,28+i*20,0x4be8ec,0.3)); }
+      var s = new THREE.Mesh(new THREE.SphereGeometry(10,16,16), new THREE.MeshBasicMaterial({color:0xffd88a})); g.add(s);
+      g.add(makeGlowSprite(glowWarm,90,0xffcf8a,0.8));
+    } else if(idx===2){
+      for(var k=0;k<60;k++){
+        var sp = makeGlowSprite(glowWhite, rand(3,9), 0xfdf8ee, rand(0.4,0.9));
+        sp.position.set(rand(-160,160), rand(-40,40), rand(-160,160));
+        g.add(sp);
+      }
+    } else if(idx===3){
+      var galGeo = new THREE.BufferGeometry();
+      var pos3=[]; var col3=[];
+      for(var gI=0; gI<900; gI++){
+        var arm = gI%3; var tt=Math.pow(Math.random(),0.6);
+        var ang = tt*5.2+arm*(Math.PI*2/3)+rand(-0.25,0.25);
+        var rr = tt*220;
+        pos3.push(Math.cos(ang)*rr, rand(-6,6), Math.sin(ang)*rr);
+        var warm = gI%5===0;
+        col3.push(warm?1:0.82, warm?0.86:0.83, warm?0.66:1);
+      }
+      galGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos3,3));
+      galGeo.setAttribute('color', new THREE.Float32BufferAttribute(col3,3));
+      var galMat = new THREE.PointsMaterial({ size:2.6, map:glowWhite, vertexColors:true, transparent:true, opacity:0.85, depthWrite:false, blending:THREE.AdditiveBlending });
+      g.add(new THREE.Points(galGeo, galMat));
+    } else if(idx===4){
+      var lg = [[0,0,26,0xf4f0e6],[70,-16,20,0xcfd0ff],[-52,36,9,0xcfd0ff],[26,44,4,0xcfd0ff],[-20,-48,3,0xcfd0ff],[60,30,3,0xcfd0ff],[-68,-10,4,0xcfd0ff]];
+      lg.forEach(function(l){
+        var sp = makeGlowSprite(glowCyan, l[2]*3, l[3], 0.85);
+        sp.position.set(l[0],rand(-8,8),l[1]);
+        g.add(sp);
+      });
+    } else if(idx===5){
+      var webGeo = new THREE.BufferGeometry(); var pos5=[]; var col5=[];
+      for(var w=0;w<300;w++){
+        pos5.push(rand(-260,260), rand(-100,100), rand(-260,260));
+        var sig = w%9===0;
+        col5.push(sig?0.29:0.9, sig?0.9:0.9, sig?0.9:1);
+      }
+      webGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos5,3));
+      webGeo.setAttribute('color', new THREE.Float32BufferAttribute(col5,3));
+      var webMat = new THREE.PointsMaterial({ size:2.2, map:glowWhite, vertexColors:true, transparent:true, opacity:0.8, depthWrite:false, blending:THREE.AdditiveBlending });
+      g.add(new THREE.Points(webGeo, webMat));
+    }
+    return g;
+  });
+
+  function sceneAct3(t, tGlobal){
+    var idx = clamp(Math.floor(t/1000/BEAT3), 0, SCALES.length-1);
+    var beatT = (t/1000) - idx*BEAT3;
+    act3Stages.forEach(function(g,i){ g.visible = i===idx; });
+    var sc = SCALES[idx];
+    var dip = lerp(340, 6, sc.grid);
+    act3Grid.update(wellDip(0,0,dip,22), tGlobal*0.001);
+    var dist = lerp(220, 480, idx/(SCALES.length-1));
+    var wob = Math.sin(tGlobal*0.0004)*8;
+    setCameraTarget(new THREE.Vector3(wob, dist*0.32, dist), new THREE.Vector3(0,0,0));
+    document.getElementById('scaleNum').textContent = sc.num;
+    document.getElementById('scaleUnit').textContent = sc.unit;
+    return { eyebrow:'SCALE OF THE UNIVERSE · '+sc.label.toUpperCase(), title:sc.title, fact:sc.fact, meta:sc.meta, accent:'var(--signal)', beatKey:'s'+idx, showScale:true };
+  }
+
+  // ================= ACT 4 : FRONTIER DISCOVERIES =================
+  var apodState = { tried:false, ok:false, img:null, title:null };
+  function tryFetchAPOD(){
+    if(apodState.tried) return; apodState.tried = true;
+    if(!navigator.onLine) return;
+    var ctrl = (typeof AbortController!=='undefined') ? new AbortController() : null;
+    var timer = setTimeout(function(){ if(ctrl) ctrl.abort(); }, 4500);
+    fetch('https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY', ctrl?{signal:ctrl.signal}:{})
+      .then(function(r){ return r.ok?r.json():Promise.reject(); })
+      .then(function(data){
+        clearTimeout(timer);
+        if(data && data.media_type==='image' && data.url){
+          new THREE.TextureLoader().load(data.url, function(tex){ apodState.ok=true; apodState.tex=tex; apodState.title=data.title; apodPlane.material.map=tex; apodPlane.material.needsUpdate=true; });
+        }
+      }).catch(function(){ clearTimeout(timer); });
+  }
+
+  var BEAT4 = reduced ? 5.4 : 4.7;
+  var FRONTIER = [
+    { key:'blackhole', name:'Sagittarius A*', fact:'Our galaxy\'s supermassive black hole — 4 million times the Sun\'s mass — was finally imaged in 2022.', meta:[['MASS','4.3 million M☉'],['DISTANCE','26,000 ly']] },
+    { key:'trappist', name:'TRAPPIST-1', fact:'Seven Earth-sized worlds circle this cool dwarf star; three orbit in the zone where liquid water could survive.', meta:[['PLANETS','7 confirmed'],['DISTANCE','40 ly']] },
+    { key:'ligo', name:'Gravitational Waves', fact:'In 2015, LIGO detected ripples in spacetime from two black holes that collided 1.3 billion years ago.', meta:[['FIRST DETECTION','Sept 14, 2015'],['SIGNAL','GW150914']] },
+    { key:'jwst', name:'James Webb Space Telescope', fact:'Webb\'s gold-coated mirror spans 6.5 meters across 18 hexagonal segments, seeing farther back in time than any telescope before it.', meta:[['MIRROR','6.5 m, 18 segments'],['ORBIT','1.5M km from Earth']] },
+    { key:'apod', name:'Deep Field', fact:'Point a telescope at a patch of sky the size of a grain of sand held at arm\'s length — Hubble found over 10,000 galaxies there.', meta:[['GALAXIES IN FIELD','10,000+'],['SOURCE','NASA APOD']] }
+  ];
+  var SCENE4_DUR = FRONTIER.length*BEAT4;
+  var act4 = new THREE.Group(); scene.add(act4); act4.visible=false;
+
+  var bhGrid = buildGrid(30,30,10, 0xff8a5c, 0.4); bhGrid.mesh.position.y=-10; act4.add(bhGrid.mesh);
+  var bhDisk = new THREE.Mesh(new THREE.TorusGeometry(38, 7, 16, 64), new THREE.MeshBasicMaterial({ color:0xffb454, transparent:true, opacity:0.8 }));
+  bhDisk.rotation.x = Math.PI/2 - 0.3; act4.add(bhDisk);
+  var bhCore = new THREE.Mesh(new THREE.SphereGeometry(16,24,24), new THREE.MeshBasicMaterial({ color:0x000000 })); act4.add(bhCore);
+
+  var trapStar = new THREE.Mesh(new THREE.SphereGeometry(9,20,20), new THREE.MeshBasicMaterial({color:0xff8a5c})); act4.add(trapStar);
+  act4.add(makeGlowSprite(glowWarm,80,0xff8a5c,0));
+  var trapPlanets = [];
+  for(var tp=0; tp<7; tp++){
+    var rr = 26+tp*13;
+    act4.add(ellipseLoop(rr,rr,0xffffff,0.08));
+    var inHZ = tp>=2 && tp<=4;
+    var pm = new THREE.Mesh(new THREE.SphereGeometry(2.6,12,12), new THREE.MeshBasicMaterial({color: inHZ?0x4be8ec:0xc7c9e8}));
+    act4.add(pm);
+    trapPlanets.push({mesh:pm, r:rr, speed:(7-tp)*0.4});
+  }
+
+  var ligoGrid = buildGrid(50,50,9, 0x4be8ec, 0.5); act4.add(ligoGrid.mesh);
+  var ligoA = new THREE.Mesh(new THREE.SphereGeometry(4,16,16), new THREE.MeshBasicMaterial({color:0xf4f0e6})); act4.add(ligoA);
+  var ligoB = new THREE.Mesh(new THREE.SphereGeometry(4,16,16), new THREE.MeshBasicMaterial({color:0xf4f0e6})); act4.add(ligoB);
+
+  var jwstGroup = new THREE.Group(); act4.add(jwstGroup);
+  var hexCoords = [[0,0],[1,0],[-1,0],[0.5,0.87],[-0.5,0.87],[0.5,-0.87],[-0.5,-0.87]];
+  var hexMeshes = hexCoords.map(function(hc){
+    var shape = new THREE.Shape();
+    var hexR = 12;
+    for(var v=0; v<6; v++){ var a=v*Math.PI/3; var x=Math.cos(a)*hexR, y=Math.sin(a)*hexR; if(v===0) shape.moveTo(x,y); else shape.lineTo(x,y); }
+    shape.closePath();
+    var geo = new THREE.ExtrudeGeometry(shape, { depth:2.4, bevelEnabled:false });
+    var mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color:0xe3cb95, metalness:0.35, roughness:0.4, emissive:0x4a3110, emissiveIntensity:0.9 }));
+    mesh.position.set(hc[0]*22, hc[1]*22, 0);
+    jwstGroup.add(mesh);
+    return mesh;
+  });
+
+  var apodPlane = new THREE.Mesh(new THREE.PlaneGeometry(140,90), new THREE.MeshBasicMaterial({ color:0x0b0e1f, transparent:true, opacity:0.95 }));
+  act4.add(apodPlane);
+  var apodSparkGeo = new THREE.BufferGeometry();
+  var apodSparkPos = new Float32Array(210*3);
+  for(var asp=0; asp<210; asp++){ apodSparkPos[asp*3]=rand(-90,90); apodSparkPos[asp*3+1]=rand(-55,55); apodSparkPos[asp*3+2]=rand(-4,4); }
+  apodSparkGeo.setAttribute('position', new THREE.BufferAttribute(apodSparkPos,3));
+  var apodSparks = new THREE.Points(apodSparkGeo, new THREE.PointsMaterial({ size:2.4, map:glowWhite, color:0xcfd0ff, transparent:true, opacity:0.8, depthWrite:false, blending:THREE.AdditiveBlending }));
+  act4.add(apodSparks);
+
+  var FRONTIER_GROUPS = [
+    [bhGrid.mesh, bhDisk, bhCore],
+    [trapStar, apodSparks].concat(trapPlanets.map(function(p){return p.mesh;})),
+    [ligoGrid.mesh, ligoA, ligoB],
+    [jwstGroup],
+    [apodPlane, apodSparks]
+  ];
+  function setFrontierVisible(idx){
+    FRONTIER_GROUPS.forEach(function(grp,i){ grp.forEach(function(o){ o.visible = i===idx; }); });
+  }
+
+  function sceneAct4(t, tGlobal){
+    var idx = clamp(Math.floor(t/1000/BEAT4), 0, FRONTIER.length-1);
+    var beatT = (t/1000)-idx*BEAT4;
+    var appear = easeOutCubic(clamp(beatT/1.2,0,1));
+    setFrontierVisible(idx);
+    var item = FRONTIER[idx];
+
+    if(idx===0){
+      bhDisk.rotation.z = tGlobal*0.0009;
+      bhGrid.update(wellDip(0,0,340,7), 0);
+      var s = appear; bhCore.scale.setScalar(s); bhDisk.scale.setScalar(s);
+      setCameraTarget(new THREE.Vector3(0, 60-appear*35, 130-appear*70), new THREE.Vector3(0,0,0));
+    } else if(idx===1){
+      trapPlanets.forEach(function(p,i){ var ang=tGlobal*0.0006*p.speed+i; p.mesh.position.set(Math.cos(ang)*p.r*appear, 0, Math.sin(ang)*p.r*appear); });
+      setCameraTarget(new THREE.Vector3(0,70,150), new THREE.Vector3(0,0,0));
+    } else if(idx===2){
+      var orbAng = tGlobal*0.004;
+      var sep = Math.max(2, 26-beatT*3.2);
+      ligoA.position.set(Math.cos(orbAng)*sep,0,Math.sin(orbAng)*sep);
+      ligoB.position.set(-Math.cos(orbAng)*sep,0,-Math.sin(orbAng)*sep);
+      setCameraTarget(new THREE.Vector3(0,90,170), new THREE.Vector3(0,0,0));
+    } else if(idx===3){
+      jwstGroup.rotation.y = tGlobal*0.0004;
+      hexMeshes.forEach(function(m,i){ var a2=clamp(appear*7-i,0,1); m.scale.setScalar(a2); });
+      setCameraTarget(new THREE.Vector3(0,20,110), new THREE.Vector3(0,0,0));
+    } else if(idx===4){
+      tryFetchAPOD();
+      apodPlane.material.opacity = 0.95*appear;
+      apodSparks.material.opacity = apodState.ok? 0 : 0.75*appear;
+      setCameraTarget(new THREE.Vector3(0,10,180), new THREE.Vector3(0,0,0));
+    }
+    var live = idx===4 && apodState.ok;
+    document.getElementById('liveBadge').classList.toggle('show', !!live);
+    return { eyebrow:'FRONTIER DISCOVERIES · '+(idx+1)+'/'+FRONTIER.length, title: live?apodState.title:item.name, fact:item.fact, meta:item.meta, accent:'var(--nebula)', beatKey:'f'+idx };
+  }
+
+  // ================= SCENE MANAGER =================
+  var SCENES = [
+    { run:function(t,g){ act1.visible=true; act2.visible=false; act3.visible=false; act4.visible=false; return sceneAct1(t,g); }, dur:SCENE1_DUR },
+    { run:function(t,g){ act1.visible=false; act2.visible=true; act3.visible=false; act4.visible=false; return sceneAct2(t,g); }, dur:SCENE2_DUR },
+    { run:function(t,g){ act1.visible=false; act2.visible=false; act3.visible=true; act4.visible=false; return sceneAct3(t,g); }, dur:SCENE3_DUR },
+    { run:function(t,g){ act1.visible=false; act2.visible=false; act3.visible=false; act4.visible=true; return sceneAct4(t,g); }, dur:SCENE4_DUR }
+  ];
+  var TOTAL = SCENES.reduce(function(a,s){return a+s.dur*1000;},0);
+
+  var dotsWrap = document.getElementById('dots');
+  SCENES.forEach(function(){ var d=document.createElement('div'); d.className='dot'; var i=document.createElement('i'); d.appendChild(i); dotsWrap.appendChild(d); });
+  var dotEls = dotsWrap.children;
+
+  var eyebrowEl=document.getElementById('eyebrow'), titleEl=document.getElementById('title'), factEl=document.getElementById('fact'), metaEl=document.getElementById('meta'), dockInner=document.getElementById('dockInner');
+  var scaleReadout=document.getElementById('scaleReadout'), liveBadge=document.getElementById('liveBadge'), clockEl=document.getElementById('clock');
+  var lastBeatKey=null;
+  function applyCaption(info){
+    scaleReadout.classList.toggle('show', !!info.showScale);
+    if(info.beatKey===lastBeatKey) return;
+    lastBeatKey = info.beatKey;
+    dockInner.classList.remove('show');
+    setTimeout(function(){
+      eyebrowEl.textContent=info.eyebrow; eyebrowEl.style.color=info.accent;
+      titleEl.textContent=info.title; factEl.textContent=info.fact;
+      metaEl.innerHTML='';
+      (info.meta||[]).forEach(function(m){ var span=document.createElement('span'); span.innerHTML=m[0]+' — <b style="color:'+info.accent+'">'+m[1]+'</b>'; metaEl.appendChild(span); });
+      dockInner.classList.add('show');
+    }, reduced?10:180);
+  }
+
+  var warping=false, warpStart=0, warpLines=[];
+  function beginWarp(){
+    if(reduced) return;
+    warping=true; warpStart=performance.now(); warpLines=[];
+    for(var i=0;i<90;i++){ warpLines.push({ang:Math.random()*Math.PI*2, speed:rand(0.6,1.4), len:rand(0.05,0.2)}); }
+  }
+  function drawWarp(now){
+    fctx.clearRect(0,0,W,H);
+    if(!warping) return;
+    var t = clamp((now-warpStart)/900,0,1);
+    if(t>=1){ warping=false; return; }
+    var intensity = t<0.5? easeOutCubic(t/0.5) : 1-easeOutCubic((t-0.5)/0.5);
+    var ox=W/2, oy=H*0.44;
+    fctx.strokeStyle='rgba(255,238,210,'+(intensity*0.8)+')'; fctx.lineWidth=1.4;
+    for(var i=0;i<warpLines.length;i++){
+      var l=warpLines[i];
+      var dist=30+intensity*Math.max(W,H)*0.7*l.speed;
+      var len=intensity*l.len*Math.max(W,H);
+      var x1=ox+Math.cos(l.ang)*dist, y1=oy+Math.sin(l.ang)*dist;
+      var x2=ox+Math.cos(l.ang)*(dist+len), y2=oy+Math.sin(l.ang)*(dist+len);
+      fctx.beginPath(); fctx.moveTo(x1,y1); fctx.lineTo(x2,y2); fctx.stroke();
+    }
+    fctx.fillStyle='rgba(3,4,10,'+(intensity*0.35)+')'; fctx.fillRect(0,0,W,H);
+  }
+
+  var startTime = performance.now();
+  var lastSceneIdx = -1;
+  var lastFrameTime = startTime;
+  var simDays = 0;
+  var DAYS_PER_SEC = 46;
+
+  function frame(now){
+    var dt = Math.max(0, Math.min((now-lastFrameTime)/1000, 0.1));
+    lastFrameTime = now;
+    var elapsed = Math.max(0, now-startTime);
+    var loopT = ((elapsed % TOTAL) + TOTAL) % TOTAL;
+
+    var acc=0, sceneIdx=0, sceneLocalMs=0;
+    for(var i=0;i<SCENES.length;i++){
+      var durMs = SCENES[i].dur*1000;
+      if(loopT < acc+durMs){ sceneIdx=i; sceneLocalMs=loopT-acc; break; }
+      acc += durMs;
+    }
+    if(sceneIdx!==lastSceneIdx){ if(lastSceneIdx!==-1) beginWarp(); lastSceneIdx=sceneIdx; }
+
+    for(var d=0; d<dotEls.length; d++){
+      var el=dotEls[d]; var innerI=el.querySelector('i');
+      if(d<sceneIdx){ el.className='dot done'; }
+      else if(d===sceneIdx){ el.className='dot active'; var frac=clamp(sceneLocalMs/(SCENES[d].dur*1000),0,1); innerI.style.transform='scaleX('+frac+')'; }
+      else { el.className='dot'; innerI.style.transform='scaleX(0)'; }
+    }
+    if(sceneIdx!==2) scaleReadout.classList.remove('show');
+    if(sceneIdx!==3) liveBadge.classList.remove('show');
+
+    if(sceneIdx>0) simDays += dt*DAYS_PER_SEC;
+    var yrs = Math.floor(simDays/365), dys = Math.floor(simDays%365);
+    clockEl.textContent = sceneIdx===0 ? 'STANDING BY' : ('YEAR '+String(yrs).padStart(2,'0')+' · DAY '+String(dys).padStart(3,'0'));
+
+    var info = SCENES[sceneIdx].run(sceneLocalMs, elapsed);
+    applyCaption(info);
+    updateCamera(dt);
+    drawWarp(now);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  resize();
+  requestAnimationFrame(frame);
+})();
