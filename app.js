@@ -823,7 +823,7 @@
     fctx.fillStyle='rgba(3,4,10,'+(intensity*0.35)+')'; fctx.fillRect(0,0,W,H);
   }
 
-  var startTime = performance.now() - parseFloat(new URLSearchParams(location.search).get('t')||0);
+  var startTime = performance.now();
   var lastSceneIdx = -1;
   var lastFrameTime = startTime;
   var simDays = 0;
